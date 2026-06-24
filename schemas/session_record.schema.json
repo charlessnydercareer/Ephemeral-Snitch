@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/charlessnydercareer/Ephemeral-Snitch/schemas/session_record.schema.json",
+  "title": "Project Snitch v1 Session Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "agent",
+    "model_or_tool",
+    "repo",
+    "branch",
+    "commit_before",
+    "commit_after",
+    "files_changed",
+    "commands_claimed",
+    "commands_verified",
+    "tests_claimed",
+    "tests_verified",
+    "artifacts_written",
+    "database_writes",
+    "failures",
+    "blockers",
+    "deferred_work",
+    "risk_flags",
+    "redaction_applied",
+    "content_capture"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "agent": {
+      "type": "string"
+    },
+    "model_or_tool": {
+      "type": "string"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "commit_before": {
+      "type": "string"
+    },
+    "commit_after": {
+      "type": "string"
+    },
+    "files_changed": {
+      "type": "array"
+    },
+    "commands_claimed": {
+      "type": "array"
+    },
+    "commands_verified": {
+      "type": "array"
+    },
+    "tests_claimed": {
+      "type": "array"
+    },
+    "tests_verified": {
+      "type": "array"
+    },
+    "artifacts_written": {
+      "type": "array"
+    },
+    "database_writes": {
+      "type": "array"
+    },
+    "failures": {
+      "type": "array"
+    },
+    "blockers": {
+      "type": "array"
+    },
+    "deferred_work": {
+      "type": "array"
+    },
+    "risk_flags": {
+      "type": "array"
+    },
+    "redaction_applied": {
+      "const": true
+    },
+    "content_capture": {
+      "const": false
+    }
+  }
+}

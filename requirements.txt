@@ -1,0 +1,5 @@
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+# Optional runtime integrations. Pin and lock reviewed versions before use:
+# inotify
+# mitmproxy
