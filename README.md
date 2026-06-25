@@ -158,6 +158,22 @@ Examples:
 Claims may be preserved, but they must never be promoted to verified evidence
 without an independent observation.
 
+Verified evidence uses a receipt:
+
+```json
+{
+  "source": "shell",
+  "observation": {
+    "command": "python -m unittest discover -s tests -v",
+    "exit_code": 0
+  },
+  "evidence_sha256": "sha256:<digest>"
+}
+```
+
+The finalizer recomputes each receipt hash and rejects unhashed, tampered,
+object-reused, or claim-identical evidence.
+
 ## Hard boundaries
 
 Snitch may:
@@ -199,18 +215,21 @@ Snitch may not:
 ## Current status
 
 The original Labs prototype contained critical correctness and privacy defects.
-The standalone Projects copy has been repaired and now passes its unit and
-static checks.
+The public project has been repaired and now passes its unit and static checks.
 
 Current state:
 
 - core safety repair: complete;
-- unit tests: 12 passing;
+- metadata-only proxy boundary: structural;
+- normalized session finalizer: implemented;
+- claims/evidence receipt isolation: implemented;
+- immutable JSON, SHA-256, and Markdown artifacts: implemented;
+- unit tests: 23 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
 - live PostgreSQL integration: not performed;
 - production readiness: no;
-- governed Git checkpoint: absent.
+- governed Git repository: public on GitHub.
 
 The repository audit and remediation record is available in
 [`AUDIT.md`](AUDIT.md).
@@ -276,10 +295,48 @@ mitmdump -s snitch_processor.py \
 
 The default stores metadata and a content hash, not prompts.
 
-Setting `capture_content=true` stores request content after sensitive-key
-redaction and system-message removal. That mode still handles sensitive data
-and requires an explicit consent, retention, encryption, and deletion policy.
-Removing content capture entirely should be considered before production use.
+Raw request-content capture is not implemented. The proxy has no content
+capture option.
+
+## Session finalizer
+
+Prepare an agent claims file:
+
+```json
+{
+  "session_id": "session-001",
+  "agent": "codex",
+  "model_or_tool": "codex",
+  "commands_claimed": [],
+  "tests_claimed": [],
+  "artifacts_written": [],
+  "failures": [],
+  "blockers": [],
+  "deferred_work": [],
+  "risk_flags": []
+}
+```
+
+Verified observer evidence is supplied separately and must contain valid
+evidence receipts. Git repository, branch, commits, and changed paths are
+derived directly by the finalizer.
+
+```bash
+python snitch_session.py \
+  --input claims.json \
+  --evidence evidence.json \
+  --repo /path/to/repository \
+  --records-dir artifacts/sessions \
+  --audit-dir artifacts/audits
+```
+
+The finalizer writes:
+
+- an exclusive canonical JSON session record;
+- a SHA-256 receipt;
+- a private Markdown audit summary.
+
+Existing artifacts are never overwritten.
 
 ## Verification
 
@@ -287,24 +344,20 @@ Removing content capture entirely should be considered before production use.
 python -m unittest discover -s tests -v
 python tests/test_snitch.py -v
 python -m py_compile *.py tests/*.py
-ruff check pg0.py reduction_sweep.py snitch_daemon.py snitch_processor.py tests/test_snitch.py
-ruff format --check pg0.py reduction_sweep.py snitch_daemon.py snitch_processor.py tests/test_snitch.py
+ruff check .
+ruff format --check .
 bash -n run_session.sh
 ```
 
 ## Recommended roadmap
 
-1. Place Snitch in a governed Git repository and commit the repaired baseline.
-2. Remove or permanently disable raw content capture for the v1 deployment.
-3. Apply redaction before every persistence boundary.
-4. Add session, agent, repository, branch, commit, and request-ID correlation.
-5. Add the normalized append-only session record schema.
-6. Add migration-owner, insert-only writer, and read-only audit roles.
-7. Test schema and permissions against disposable PostgreSQL.
-8. Preserve deterministic reduction and malformed-trace quarantine.
-9. Write one normalized session summary under
+1. Add request-ID correlation to the normalized session record.
+2. Add migration-owner, insert-only writer, and read-only audit roles.
+3. Test schema and permissions against disposable PostgreSQL.
+4. Persist normalized session records through the append-only writer role.
+5. Write one normalized session summary under
    the operator-configured audit directory.
-10. Add a read-only EVECOR health and timeline view later.
+6. Add a read-only EVECOR health and timeline view later.
 
 ## EVECOR deployment gate
 
@@ -333,9 +386,8 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 - no reviewed dependency lock;
 - no formal authorization model for proxy interception;
 - no service sandbox, health contract, or deployment manifest;
-- no independent governed Git checkpoint.
-- no normalized v1 session-record producer;
-- no automatic audit-summary artifact writer.
+- no request-ID field in the v1 session contract;
+- no PostgreSQL persistence for normalized session records.
 
 Until these are resolved, Snitch should remain an operator-controlled
 development and audit prototype.

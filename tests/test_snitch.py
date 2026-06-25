@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,14 +18,25 @@ from reduction_sweep import (
     TraceValidationError,
     validate_trace,
 )
+from session_record import (
+    REQUIRED_FIELDS,
+    SessionRecordError,
+    build_record,
+    make_evidence_receipt,
+    redact_value,
+    record_digest,
+    validate_record,
+    verify_evidence_receipt,
+    write_session_artifacts,
+)
 from snitch_daemon import (
     secure_jsonl_write,
     snapshot_events,
     validate_session_id as validate_daemon_session_id,
 )
 from snitch_processor import (
-    payload_for_storage,
     provider_for_host,
+    request_summary,
     secure_json_write,
     validate_session_id as validate_processor_session_id,
 )
@@ -153,7 +165,7 @@ class ProcessorTests(unittest.TestCase):
         self.assertIsNone(provider_for_host("openai.com.attacker.example"))
         self.assertIsNone(provider_for_host("notopenai.com"))
 
-    def test_metadata_only_is_default_safe_shape(self) -> None:
+    def test_proxy_only_exposes_metadata_summary(self) -> None:
         payload = {
             "model": "example-model",
             "messages": [
@@ -162,32 +174,285 @@ class ProcessorTests(unittest.TestCase):
             ],
             "api_key": "secret-value",
         }
-        stored = payload_for_storage(payload, capture_content=False)
+        stored = request_summary(payload)
         self.assertEqual(stored["model"], "example-model")
         self.assertEqual(stored["message_count"], 2)
         self.assertNotIn("messages", stored)
         self.assertNotIn("api_key", stored)
-
-    def test_content_capture_redacts_sensitive_fields_and_system_messages(self) -> None:
-        payload = {
-            "messages": [
-                {"role": "system", "content": "private policy"},
-                {"role": "user", "content": "allowed only with consent"},
-            ],
-            "authorization": "secret-value",
-            "nested": {"access_token": "secret-value"},
-        }
-        stored = payload_for_storage(payload, capture_content=True)
-        self.assertEqual(stored["authorization"], "[REDACTED]")
-        self.assertEqual(stored["nested"]["access_token"], "[REDACTED]")
-        self.assertEqual(len(stored["messages"]), 1)
-        self.assertEqual(stored["messages"][0]["role"], "user")
 
     def test_json_export_is_private(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "export.json"
             secure_json_write(path, [{"safe": True}])
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+
+class SessionRecordTests(unittest.TestCase):
+    def test_public_schema_matches_required_contract(self) -> None:
+        schema_path = (
+            Path(__file__).resolve().parents[1]
+            / "schemas"
+            / "session_record.schema.json"
+        )
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(schema["required"], list(REQUIRED_FIELDS))
+        self.assertEqual(schema["properties"]["content_capture"], {"const": False})
+        for field in (
+            "commands_verified",
+            "tests_verified",
+            "database_writes",
+        ):
+            self.assertEqual(
+                schema["properties"][field]["items"]["$ref"],
+                "#/$defs/evidenceReceipt",
+            )
+
+    def test_redaction_handles_keys_and_inline_secret_shapes(self) -> None:
+        redacted = redact_value(
+            {
+                "token": "secret",
+                "message": "Authorization: " + "Bearer " + "abc.def.ghi",
+                "nested": {"database_url": "postgres" + "ql://user:pass@host/db"},
+            }
+        )
+        self.assertEqual(redacted["token"], "[REDACTED]")
+        self.assertNotIn("abc.def.ghi", redacted["message"])
+        self.assertEqual(redacted["nested"]["database_url"], "[REDACTED]")
+
+    def test_claims_cannot_supply_verified_evidence(self) -> None:
+        with self.assertRaisesRegex(SessionRecordError, "unsupported fields"):
+            build_record(
+                {
+                    "session_id": "session-1",
+                    "agent": "agent",
+                    "model_or_tool": "tool",
+                    "tests_verified": ["fabricated"],
+                },
+                repo=Path(__file__).resolve().parents[1],
+            )
+
+    def test_build_record_separates_claims_from_evidence(self) -> None:
+        command_receipt = make_evidence_receipt(
+            "shell",
+            {"command": "verified command", "exit": 0},
+        )
+        test_receipt = make_evidence_receipt(
+            "test-runner",
+            {"test": "verified test", "result": "passed"},
+        )
+        record = build_record(
+            {
+                "session_id": "session-1",
+                "agent": "agent",
+                "model_or_tool": "tool",
+                "commands_claimed": ["claimed command"],
+                "tests_claimed": ["claimed test"],
+            },
+            repo=Path(__file__).resolve().parents[1],
+            evidence={
+                "commands_verified": [command_receipt],
+                "tests_verified": [test_receipt],
+            },
+        )
+        self.assertEqual(record["commands_claimed"], ["claimed command"])
+        self.assertEqual(record["commands_verified"], [command_receipt])
+        self.assertTrue(record["redaction_applied"])
+        self.assertFalse(record["content_capture"])
+        self.assertIn("README.md", record["files_changed"])
+
+    def test_unhashed_verified_evidence_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SessionRecordError, "receipt"):
+            build_record(
+                {
+                    "session_id": "session-1",
+                    "agent": "agent",
+                    "model_or_tool": "tool",
+                },
+                repo=Path(__file__).resolve().parents[1],
+                evidence={
+                    "commands_verified": [
+                        {"source": "shell", "observation": {"exit": 0}}
+                    ]
+                },
+            )
+
+    def test_tampered_evidence_receipt_is_rejected(self) -> None:
+        receipt = make_evidence_receipt("shell", {"command": "safe", "exit": 0})
+        receipt["observation"]["exit"] = 1
+        with self.assertRaisesRegex(SessionRecordError, "does not match"):
+            verify_evidence_receipt(receipt)
+
+    def test_identical_claim_cannot_be_promoted_to_evidence(self) -> None:
+        claim = {"command": "git status"}
+        receipt = make_evidence_receipt("shell", dict(claim))
+        with self.assertRaisesRegex(SessionRecordError, "canonically identical"):
+            build_record(
+                {
+                    "session_id": "session-1",
+                    "agent": "agent",
+                    "model_or_tool": "tool",
+                    "commands_claimed": [claim],
+                },
+                repo=Path(__file__).resolve().parents[1],
+                evidence={"commands_verified": [receipt]},
+            )
+
+    def test_same_claim_object_cannot_be_reused_as_receipt(self) -> None:
+        claim = make_evidence_receipt("shell", {"command": "git status"})
+        with self.assertRaisesRegex(SessionRecordError, "reuses"):
+            build_record(
+                {
+                    "session_id": "session-1",
+                    "agent": "agent",
+                    "model_or_tool": "tool",
+                    "commands_claimed": [claim],
+                },
+                repo=Path(__file__).resolve().parents[1],
+                evidence={"commands_verified": [claim]},
+            )
+
+    def test_record_digest_is_deterministic(self) -> None:
+        record = self._record()
+        self.assertEqual(
+            record_digest(record),
+            record_digest(dict(reversed(list(record.items())))),
+        )
+
+    def test_finalizer_cli_derives_git_evidence_and_refuses_overwrite(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+            (repo / "tracked.txt").write_text("before\n", encoding="utf-8")
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "Snitch Test",
+                "GIT_AUTHOR_EMAIL": "snitch" + "@example.invalid",
+                "GIT_COMMITTER_NAME": "Snitch Test",
+                "GIT_COMMITTER_EMAIL": "snitch" + "@example.invalid",
+            }
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, env=env)
+            subprocess.run(
+                ["git", "commit", "-m", "baseline"],
+                cwd=repo,
+                check=True,
+                env=env,
+                stdout=subprocess.PIPE,
+            )
+            (repo / "tracked.txt").write_text("after\n", encoding="utf-8")
+
+            claims_path = root / "claims.json"
+            evidence_path = root / "evidence.json"
+            claims_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "cli-session",
+                        "agent": "test-agent",
+                        "model_or_tool": "test-tool",
+                        "commands_claimed": ["claimed"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "commands_verified": [
+                            make_evidence_receipt(
+                                "shell",
+                                {"command": "verified", "exit_code": 0},
+                            )
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            command = [
+                sys.executable,
+                str(project_root / "snitch_session.py"),
+                "--input",
+                str(claims_path),
+                "--evidence",
+                str(evidence_path),
+                "--repo",
+                str(repo),
+                "--records-dir",
+                str(root / "sessions"),
+                "--audit-dir",
+                str(root / "audits"),
+            ]
+            first = subprocess.run(
+                command,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+            result = json.loads(first.stdout)
+            record = json.loads(Path(result["record"]).read_text(encoding="utf-8"))
+            self.assertEqual(record["files_changed"], ["tracked.txt"])
+            self.assertEqual(record["branch"], "main")
+            self.assertEqual(len(record["commands_verified"]), 1)
+
+            second = subprocess.run(
+                command,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("File exists", second.stderr)
+
+    def test_validation_rejects_content_capture(self) -> None:
+        record = self._record()
+        record["content_capture"] = True
+        with self.assertRaisesRegex(SessionRecordError, "content_capture"):
+            validate_record(record)
+
+    def test_artifact_write_is_private_and_refuses_overwrite(self) -> None:
+        record = self._record()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = write_session_artifacts(
+                record,
+                records_dir=Path(temp_dir) / "sessions",
+                audit_dir=Path(temp_dir) / "audits",
+            )
+            for field in ("record", "digest", "audit"):
+                path = Path(result[field])
+                self.assertTrue(path.exists())
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            with self.assertRaises(FileExistsError):
+                write_session_artifacts(
+                    record,
+                    records_dir=Path(temp_dir) / "sessions",
+                    audit_dir=Path(temp_dir) / "audits",
+                )
+
+    def _record(self) -> dict[str, object]:
+        return {
+            "session_id": "session-1",
+            "agent": "agent",
+            "model_or_tool": "tool",
+            "repo": "repo",
+            "branch": "main",
+            "commit_before": "a" * 40,
+            "commit_after": "b" * 40,
+            "files_changed": ["README.md"],
+            "commands_claimed": [],
+            "commands_verified": [],
+            "tests_claimed": [],
+            "tests_verified": [],
+            "artifacts_written": [],
+            "database_writes": [],
+            "failures": [],
+            "blockers": [],
+            "deferred_work": [],
+            "risk_flags": [],
+            "redaction_applied": True,
+            "content_capture": False,
+        }
 
 
 class FakeCursor:

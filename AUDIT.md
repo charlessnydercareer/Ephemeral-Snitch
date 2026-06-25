@@ -23,8 +23,9 @@ The current project:
 
 - requires an explicit `SNITCH_DATABASE_URL`;
 - uses a real psycopg adapter;
-- stores metadata rather than prompts by default;
-- redacts sensitive fields when optional content capture is enabled;
+- stores metadata rather than prompts;
+- has no raw-content capture path;
+- redacts claims and evidence before persistence;
 - hashes command text rather than storing it;
 - validates session IDs and workspaces;
 - writes private atomic exports;
@@ -32,11 +33,15 @@ The current project:
 - rejects conflicting duplicate events;
 - quarantines malformed traces;
 - keeps schema provisioning outside runtime code;
+- structurally removes raw proxy content capture;
+- separates claims from verified evidence receipts;
+- derives Git facts independently;
+- writes immutable JSON, SHA-256, and Markdown session artifacts;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
-- 12 unit tests passed.
+- 23 unit tests passed, including an end-to-end finalizer CLI test.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.
 - Shell syntax validation passed.
@@ -50,8 +55,8 @@ was used during remediation.
 
 - dedicated migration, writer, and reader database roles;
 - PostgreSQL integration and permission tests;
-- normalized session-record production;
-- automatic audit-summary generation;
+- PostgreSQL persistence for normalized session records;
+- request-ID correlation;
 - retention, deletion, consent, and encrypted-export policies;
 - reviewed dependency lock;
 - sandboxed deployment and health contract.

@@ -25,15 +25,6 @@ PROVIDER_SUFFIXES = {
     "gemini": ("generativelanguage.googleapis.com",),
     "google": ("googleapis.com", "google.com"),
 }
-SENSITIVE_KEYS = {
-    "api_key",
-    "apikey",
-    "authorization",
-    "cookie",
-    "password",
-    "secret",
-    "token",
-}
 
 
 def validate_session_id(session_id: str) -> str:
@@ -51,23 +42,6 @@ def provider_for_host(host: str) -> str | None:
         ):
             return provider
     return None
-
-
-def redact_sensitive(value: Any) -> Any:
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, item in value.items():
-            normalized_key = key.lower().replace("-", "_")
-            if normalized_key in SENSITIVE_KEYS or normalized_key.endswith(
-                ("_token", "_secret", "_password", "_key")
-            ):
-                result[key] = "[REDACTED]"
-            else:
-                result[key] = redact_sensitive(item)
-        return result
-    if isinstance(value, list):
-        return [redact_sensitive(item) for item in value]
-    return value
 
 
 def request_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -96,24 +70,6 @@ def request_summary(payload: dict[str, Any]) -> dict[str, Any]:
             ).encode("utf-8")
         ).hexdigest(),
     }
-
-
-def payload_for_storage(
-    payload: dict[str, Any],
-    *,
-    capture_content: bool,
-) -> dict[str, Any]:
-    if not capture_content:
-        return request_summary(payload)
-
-    redacted = redact_sensitive(payload)
-    if isinstance(redacted.get("messages"), list):
-        redacted["messages"] = [
-            item
-            for item in redacted["messages"]
-            if not isinstance(item, dict) or item.get("role") != "system"
-        ]
-    return redacted
 
 
 def secure_json_write(path: Path, value: Any) -> None:
@@ -146,12 +102,6 @@ class HindsightStyleSnitch:
             default="one_off_session",
             help="Session ID",
         )
-        loader.add_option(
-            name="capture_content",
-            typespec=bool,
-            default=False,
-            help="Store redacted request content instead of metadata only",
-        )
 
     def configure(self, updated: set[str]) -> None:
         if "session_id" not in updated:
@@ -181,10 +131,7 @@ class HindsightStyleSnitch:
             if not isinstance(payload, dict):
                 raise ValueError("request payload must be a JSON object")
 
-            stored = payload_for_storage(
-                payload,
-                capture_content=bool(ctx.options.capture_content),
-            )
+            stored = request_summary(payload)
             self.pg.execute(
                 """
                 INSERT INTO public.snitch_intercepted_requests (

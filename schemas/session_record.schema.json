@@ -4,6 +4,28 @@
   "title": "Project Snitch v1 Session Record",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "evidenceReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "observation",
+        "evidence_sha256"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observation": {},
+        "evidence_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    }
+  },
   "required": [
     "session_id",
     "agent",
@@ -51,25 +73,38 @@
       "type": "string"
     },
     "files_changed": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
     },
     "commands_claimed": {
       "type": "array"
     },
     "commands_verified": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceReceipt"
+      }
     },
     "tests_claimed": {
       "type": "array"
     },
     "tests_verified": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceReceipt"
+      }
     },
     "artifacts_written": {
       "type": "array"
     },
     "database_writes": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceReceipt"
+      }
     },
     "failures": {
       "type": "array"
