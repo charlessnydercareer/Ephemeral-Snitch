@@ -90,8 +90,16 @@ The current machine-readable contract is
 ## Safety and scope
 
 - Do not connect to a live database or proxy traffic without operator approval.
-- Use a dedicated least-privilege database role.
+- Use `snitch_migrator` only for schema migration.
+- Use `snitch_writer` only for canonical record insertion.
+- Use `snitch_reader` only for audit reads.
+- Runtime writer code must not receive SELECT, UPDATE, DELETE, TRUNCATE, ALTER,
+  DROP, or CREATE privileges.
 - Runtime code must not provision schema.
+- Keep database credentials and URLs in the runtime secret environment; never
+  write them to source, SQL, tests, audits, or Git.
+- PostgreSQL permission validation must use the disposable Compose contract,
+  never a live database.
 - Keep raw content capture disabled.
 - Preserve malformed evidence in private quarantine rather than deleting it.
 - Keep exports private and atomic.

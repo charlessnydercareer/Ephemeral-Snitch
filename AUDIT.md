@@ -1,7 +1,7 @@
 # Project Snitch Audit Summary
 
 Date: 2026-06-24
-Status: repaired prototype; not production-ready
+Status: repaired prototype with disposable PostgreSQL validation; not production-ready
 
 ## Initial critical findings
 
@@ -39,11 +39,18 @@ The current project:
 - writes immutable JSON, SHA-256, and Markdown session artifacts;
 - binds strict request IDs into records, receipts, and summaries;
 - reserves request IDs durably to reject collisions;
+- persists canonical session records through an insert-only psycopg store;
+- defines non-login migration, writer, and reader capability roles;
+- stores normalized records in a dedicated `snitch` schema;
+- enforces request, session, digest, redaction, and content-capture constraints
+  at the database boundary;
+- verifies writer and reader privileges against disposable PostgreSQL 18.4;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
 - 27 unit tests passed, including request-ID and end-to-end finalizer tests.
+- 5 disposable PostgreSQL integration and permission tests passed.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.
 - Shell syntax validation passed.
@@ -51,13 +58,13 @@ The current project:
 - Public-release secret-pattern scan passed.
 
 No live database, proxy traffic, service deployment, or external interception
-was used during remediation.
+was used during remediation. PostgreSQL validation used a loopback-only,
+tmpfs-backed disposable container with transient credentials.
 
 ## Remaining blockers
 
-- dedicated migration, writer, and reader database roles;
-- PostgreSQL integration and permission tests;
-- PostgreSQL persistence for normalized session records;
+- feature branch review and merge;
+- deployment wiring from the finalizer command to the insert-only store;
 - retention, deletion, consent, and encrypted-export policies;
 - reviewed dependency lock;
 - sandboxed deployment and health contract.

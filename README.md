@@ -226,9 +226,11 @@ Current state:
 - claims/evidence receipt isolation: implemented;
 - immutable JSON, SHA-256, and Markdown artifacts: implemented;
 - unit tests: 27 passing;
+- disposable PostgreSQL contract tests: 5 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
-- live PostgreSQL integration: not performed;
+- disposable PostgreSQL 18.4 integration: passing;
+- canonical session ledger roles: migration, insert-only writer, read-only reader;
 - production readiness: no;
 - governed Git repository: public on GitHub.
 
@@ -250,15 +252,46 @@ deployment.
 
 ## Database
 
-Load `SNITCH_DATABASE_URL` from the approved secret store, then apply the schema
-with migration credentials:
+The legacy trace prototypes still use `schema_monoid.sql` and
+`SNITCH_DATABASE_URL`. The normalized v1 session ledger uses a dedicated
+`snitch` schema and three non-login capability roles:
+
+- `snitch_migrator`: owns schema and DDL;
+- `snitch_writer`: can only insert canonical session records;
+- `snitch_reader`: can only select canonical session records.
+
+Apply these role scripts only to a database dedicated to Snitch. The hardening
+revokes default `PUBLIC` schema creation and is not intended for a shared
+application database.
+
+An infrastructure administrator creates login principals, injects their
+credentials from the approved secret store, and grants the appropriate
+capability role. Passwords and database URLs do not belong in SQL or source.
+
+Apply the v1 ledger with a migration principal that is allowed to assume
+`snitch_migrator`:
 
 ```bash
-psql "$SNITCH_DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_monoid.sql
+psql "$SNITCH_ADMIN_DATABASE_URL" -f sql/roles.sql
+psql "$SNITCH_ADMIN_DATABASE_URL" \
+  -c "GRANT snitch_migrator TO your_migration_principal"
+psql "$SNITCH_MIGRATOR_DATABASE_URL" -f sql/session_ledger.sql
 ```
 
-Use a dedicated least-privilege Snitch runtime role. Do not run Snitch with a
-database owner or administrator account.
+The finalizer store reads only `SNITCH_WRITER_DATABASE_URL` and performs one
+validated `INSERT`; it does not provision, read, update, delete, truncate, or
+drop ledger state.
+
+Run the isolated permission suite against a temporary PostgreSQL 18.4
+container:
+
+```bash
+./scripts/test-postgres-contract.sh
+```
+
+The script generates transient credentials, binds PostgreSQL to an
+automatically assigned loopback port, stores its data in container tmpfs, and
+removes only its uniquely named disposable Compose project on exit.
 
 ## Trace reducer
 
@@ -337,7 +370,7 @@ The finalizer writes:
 
 - an exclusive canonical JSON session record;
 - a SHA-256 receipt;
-- a private Markdown audit summary.
+- a private Markdown audit summary;
 - a private request-ID reservation under `artifacts/reservations/`.
 
 Existing artifacts are never overwritten.
@@ -359,15 +392,16 @@ python -m py_compile *.py tests/*.py
 ruff check .
 ruff format --check .
 bash -n run_session.sh
+./scripts/test-postgres-contract.sh
 ```
 
 ## Recommended roadmap
 
-1. Add migration-owner, insert-only writer, and read-only audit roles.
-2. Test schema and permissions against disposable PostgreSQL.
-3. Persist normalized session records through the append-only writer role.
-4. Write one normalized session summary under
+1. Review and merge the session finalizer and PostgreSQL contract branches.
+2. Wire the finalizer command to the insert-only session store at deployment.
+3. Write one normalized session summary under
    the operator-configured audit directory.
+4. Define retention, deletion, consent, and encrypted-export policies.
 5. Add a read-only EVECOR health and timeline view later.
 
 ## EVECOR deployment gate
