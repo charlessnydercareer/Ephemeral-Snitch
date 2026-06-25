@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from psycopg import errors
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pg0 import Pg0, Pg0Error
@@ -121,6 +123,65 @@ class TraceTests(unittest.TestCase):
             sweeper.process_reduction_sweep()
             self.assertTrue(trace_path.exists())
             self.assertFalse(pool.connection_instance.transaction_committed)
+
+    def test_malformed_trace_is_private_and_does_not_block_valid_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            malformed = Path(temp_dir) / "a.ready.json"
+            valid = Path(temp_dir) / "b.ready.json"
+            malformed.write_text("{broken", encoding="utf-8")
+            valid.write_text(
+                json.dumps(
+                    {
+                        "seq_id": "session-valid",
+                        "timestamp": "2026-06-24T12:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pool = FakePool()
+            sweeper = MonoidReductionSweeper(
+                "test-connection",
+                temp_dir,
+                pool_factory=lambda **_: pool,
+            )
+
+            sweeper.process_reduction_sweep()
+
+            quarantined = Path(temp_dir) / "a.ready.json.malformed"
+            self.assertTrue(quarantined.exists())
+            self.assertEqual(stat.S_IMODE(quarantined.stat().st_mode), 0o600)
+            self.assertFalse(valid.exists())
+
+    def test_duplicate_trace_is_quarantined_and_loop_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            duplicate = Path(temp_dir) / "a.ready.json"
+            valid = Path(temp_dir) / "b.ready.json"
+            for path, seq_id in (
+                (duplicate, "duplicate"),
+                (valid, "valid"),
+            ):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "seq_id": seq_id,
+                            "timestamp": "2026-06-24T12:00:00+00:00",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            pool = FakePool(fail_once=errors.UniqueViolation("duplicate"))
+            sweeper = MonoidReductionSweeper(
+                "test-connection",
+                temp_dir,
+                pool_factory=lambda **_: pool,
+            )
+
+            sweeper.process_reduction_sweep()
+
+            quarantined = Path(temp_dir) / "a.ready.json.duplicate"
+            self.assertTrue(quarantined.exists())
+            self.assertEqual(stat.S_IMODE(quarantined.stat().st_mode), 0o600)
+            self.assertFalse(valid.exists())
 
 
 class DaemonTests(unittest.TestCase):
@@ -261,7 +322,10 @@ class SessionRecordTests(unittest.TestCase):
         self.assertEqual(record["commands_verified"], [command_receipt])
         self.assertTrue(record["redaction_applied"])
         self.assertFalse(record["content_capture"])
-        self.assertIn("README.md", record["files_changed"])
+        self.assertEqual(
+            record["files_changed"],
+            sorted(set(record["files_changed"])),
+        )
 
     def test_unhashed_verified_evidence_is_rejected(self) -> None:
         with self.assertRaisesRegex(SessionRecordError, "receipt"):
@@ -476,8 +540,14 @@ class SessionRecordTests(unittest.TestCase):
 
 
 class FakeCursor:
-    def __init__(self, *, fail_insert: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_insert: bool = False,
+        fail_once: Exception | None = None,
+    ) -> None:
         self.fail_insert = fail_insert
+        self.fail_once = fail_once
         self.rowcount = 0
 
     def __enter__(self) -> "FakeCursor":
@@ -488,6 +558,10 @@ class FakeCursor:
 
     def execute(self, statement: str, parameters: object = None) -> None:
         if "INSERT INTO" in statement:
+            if self.fail_once is not None:
+                failure = self.fail_once
+                self.fail_once = None
+                raise failure
             if self.fail_insert:
                 raise RuntimeError("simulated insert failure")
             self.rowcount = 1
@@ -508,8 +582,14 @@ class FakeTransaction:
 
 
 class FakeConnection:
-    def __init__(self, *, fail_insert: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_insert: bool = False,
+        fail_once: Exception | None = None,
+    ) -> None:
         self.fail_insert = fail_insert
+        self.fail_once = fail_once
         self.transaction_committed = False
 
     def __enter__(self) -> "FakeConnection":
@@ -522,12 +602,25 @@ class FakeConnection:
         return FakeTransaction(self)
 
     def cursor(self) -> FakeCursor:
-        return FakeCursor(fail_insert=self.fail_insert)
+        cursor = FakeCursor(
+            fail_insert=self.fail_insert,
+            fail_once=self.fail_once,
+        )
+        self.fail_once = None
+        return cursor
 
 
 class FakePool:
-    def __init__(self, *, fail_insert: bool = False) -> None:
-        self.connection_instance = FakeConnection(fail_insert=fail_insert)
+    def __init__(
+        self,
+        *,
+        fail_insert: bool = False,
+        fail_once: Exception | None = None,
+    ) -> None:
+        self.connection_instance = FakeConnection(
+            fail_insert=fail_insert,
+            fail_once=fail_once,
+        )
 
     def connection(self) -> FakeConnection:
         return self.connection_instance

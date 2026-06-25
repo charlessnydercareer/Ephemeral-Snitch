@@ -106,6 +106,7 @@ cd "$ROOT"
 "$PYTHON" -m unittest \
     tests.test_postgres_contract \
     tests.test_launcher_postgres \
+    tests.test_reducer_postgres \
     -v
 
 SNITCH_WRITER_DATABASE_URL="$SNITCH_TEST_WRITER_DATABASE_URL" \

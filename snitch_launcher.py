@@ -15,6 +15,7 @@ CHILD_CONFIG_VARS = (
     "SNITCH_RECORDS_DIR",
     "SNITCH_RESERVATIONS_DIR",
     "SNITCH_AUDIT_DIR",
+    "SNITCH_SWEEP_INTERVAL_SEC",
 )
 TABLE_PRIVILEGES = (
     "SELECT",
@@ -24,6 +25,10 @@ TABLE_PRIVILEGES = (
     "TRUNCATE",
     "REFERENCES",
     "TRIGGER",
+)
+LEDGER_TABLES = (
+    "snitch.session_records",
+    "snitch.trace_records",
 )
 
 
@@ -57,20 +62,21 @@ def _probe_role(
                 ):
                     raise LauncherValidationError("capability role is missing")
 
-                for privilege in TABLE_PRIVILEGES:
-                    granted = _fetch_boolean(
-                        cursor,
-                        """
-                        SELECT has_table_privilege(
-                            current_user,
-                            'snitch.session_records',
-                            %s
+                for table_name in LEDGER_TABLES:
+                    for privilege in TABLE_PRIVILEGES:
+                        granted = _fetch_boolean(
+                            cursor,
+                            """
+                            SELECT has_table_privilege(
+                                current_user,
+                                %s,
+                                %s
+                            )
+                            """,
+                            (table_name, privilege),
                         )
-                        """,
-                        (privilege,),
-                    )
-                    if granted != (privilege == required_privilege):
-                        raise LauncherValidationError("table privileges are unsafe")
+                        if granted != (privilege == required_privilege):
+                            raise LauncherValidationError("table privileges are unsafe")
 
                 if _fetch_boolean(
                     cursor,
@@ -90,20 +96,21 @@ def _probe_role(
                 ):
                     raise LauncherValidationError("runtime principal owns schema")
 
-                if _fetch_boolean(
-                    cursor,
-                    """
-                    SELECT pg_catalog.pg_get_userbyid(c.relowner) = current_user
-                    FROM pg_catalog.pg_class AS c
-                    JOIN pg_catalog.pg_namespace AS n
-                      ON n.oid = c.relnamespace
-                    WHERE n.nspname = 'snitch'
-                      AND c.relname = 'session_records'
-                      AND c.relkind IN ('r', 'p')
-                    """,
-                    (),
-                ):
-                    raise LauncherValidationError("runtime principal owns ledger")
+                for table_name in ("session_records", "trace_records"):
+                    if _fetch_boolean(
+                        cursor,
+                        """
+                        SELECT pg_catalog.pg_get_userbyid(c.relowner) = current_user
+                        FROM pg_catalog.pg_class AS c
+                        JOIN pg_catalog.pg_namespace AS n
+                          ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'snitch'
+                          AND c.relname = %s
+                          AND c.relkind IN ('r', 'p')
+                        """,
+                        (table_name,),
+                    ):
+                        raise LauncherValidationError("runtime principal owns ledger")
     except LauncherValidationError:
         raise
     except Exception as exc:

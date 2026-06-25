@@ -130,6 +130,51 @@ class PostgresLeastPrivilegeContractTests(unittest.TestCase):
                         ),
                     )
 
+    def test_trace_ledger_is_insert_only_and_rejects_duplicates(self) -> None:
+        payload = {
+            "seq_id": "trace-request-001",
+            "event_hash": "sha256:" + ("a" * 64),
+        }
+        with psycopg.connect(WRITER_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO snitch.trace_records (
+                        event_id,
+                        request_id,
+                        payload
+                    ) VALUES (%s, %s, %s)
+                    """,
+                    (
+                        payload["event_hash"],
+                        payload["seq_id"],
+                        Jsonb(payload),
+                    ),
+                )
+
+        with psycopg.connect(WRITER_URL) as connection:
+            with connection.cursor() as cursor:
+                with self.assertRaises(errors.UniqueViolation):
+                    cursor.execute(
+                        """
+                        INSERT INTO snitch.trace_records (
+                            event_id,
+                            request_id,
+                            payload
+                        ) VALUES (%s, %s, %s)
+                        """,
+                        (
+                            "sha256:" + ("b" * 64),
+                            payload["seq_id"],
+                            Jsonb(
+                                {
+                                    **payload,
+                                    "event_hash": "sha256:" + ("b" * 64),
+                                }
+                            ),
+                        ),
+                    )
+
 
 def sample_record() -> dict[str, object]:
     return {

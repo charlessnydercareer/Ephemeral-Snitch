@@ -13,8 +13,12 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from psycopg import errors
+    from psycopg.types.json import Jsonb
     from psycopg_pool import ConnectionPool
 except ImportError:  # pragma: no cover - exercised by the CLI environment
+    errors = None  # type: ignore[assignment]
+    Jsonb = None  # type: ignore[assignment,misc]
     ConnectionPool = None  # type: ignore[assignment]
 
 
@@ -102,7 +106,7 @@ class MonoidReductionSweeper:
     ) -> None:
         if not connection_string:
             raise ValueError("SNITCH_DATABASE_URL is required")
-        if ConnectionPool is None and pool_factory is None:
+        if (ConnectionPool is None or Jsonb is None) and pool_factory is None:
             raise RuntimeError(
                 "psycopg_pool is required; install the project dependencies first."
             )
@@ -139,9 +143,9 @@ class MonoidReductionSweeper:
         try:
             with file_path.open("r", encoding="utf-8") as handle:
                 trace = validate_trace(json.load(handle))
-        except (OSError, json.JSONDecodeError, TraceValidationError) as exc:
+        except (OSError, json.JSONDecodeError, TraceValidationError):
             target = quarantine(file_path, ".malformed")
-            logger.error("Quarantined malformed trace %s: %s", target.name, exc)
+            logger.error("Quarantined malformed trace %s", target.name)
             return
 
         try:
@@ -150,56 +154,36 @@ class MonoidReductionSweeper:
                     with connection.cursor() as cursor:
                         cursor.execute(
                             """
-                            INSERT INTO public.snitch_wal_ledger (
-                                seq_id,
-                                timestamp,
-                                command_hash,
-                                affected_files_count,
-                                command_count,
-                                event_hash
-                            ) VALUES (%s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (seq_id) DO NOTHING
+                            INSERT INTO snitch.trace_records (
+                                event_id,
+                                request_id,
+                                payload
+                            ) VALUES (%s, %s, %s)
                             """,
                             (
-                                trace["seq_id"],
-                                trace["timestamp"],
-                                trace["command_hash"],
-                                trace["affected_files_count"],
-                                trace["command_count"],
                                 trace["event_hash"],
+                                trace["seq_id"],
+                                Jsonb(trace) if Jsonb is not None else trace,
                             ),
                         )
-                        inserted = cursor.rowcount == 1
-                        if not inserted:
-                            cursor.execute(
-                                """
-                                SELECT event_hash
-                                FROM public.snitch_wal_ledger
-                                WHERE seq_id = %s
-                                """,
-                                (trace["seq_id"],),
-                            )
-                            existing = cursor.fetchone()
-                            if not existing or existing[0] != trace["event_hash"]:
-                                raise RuntimeError(
-                                    "seq_id collision with different trace content"
-                                )
         except Exception as exc:
-            logger.error("Trace %s was not committed: %s", file_path.name, exc)
+            if errors is not None and isinstance(exc, errors.UniqueViolation):
+                target = quarantine(file_path, ".duplicate")
+                logger.error("Quarantined duplicate trace %s", target.name)
+                return
+            logger.error("Trace %s was not committed.", file_path.name)
             return
 
         try:
             file_path.unlink()
-        except OSError as exc:
+        except OSError:
             logger.warning(
-                "Trace committed but source cleanup failed for %s: %s",
+                "Trace committed but source cleanup failed for %s.",
                 file_path.name,
-                exc,
             )
             return
 
-        action = "inserted" if inserted else "already present"
-        logger.info("Trace %s: %s", file_path.name, action)
+        logger.info("Trace %s: inserted", file_path.name)
 
 
 def parse_args() -> argparse.Namespace:
@@ -224,9 +208,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    connection_string = os.getenv("SNITCH_DATABASE_URL")
+    connection_string = os.getenv("SNITCH_WRITER_DATABASE_URL")
     if not connection_string:
-        raise SystemExit("SNITCH_DATABASE_URL is required")
+        raise SystemExit("SNITCH_WRITER_DATABASE_URL is required")
 
     sweeper = MonoidReductionSweeper(connection_string, args.source_dir)
     if args.once:

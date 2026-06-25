@@ -40,7 +40,12 @@ def valid_role_results(required_privilege: str) -> list[bool]:
     )
     return [
         True,
-        *(privilege == required_privilege for privilege in privileges),
+        *(
+            privilege == required_privilege
+            for _table in range(2)
+            for privilege in privileges
+        ),
+        False,
         False,
         False,
         False,

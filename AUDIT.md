@@ -21,7 +21,7 @@ The original prototype:
 
 The current project:
 
-- requires an explicit `SNITCH_DATABASE_URL`;
+- requires explicit role-specific database configuration;
 - uses a real psycopg adapter;
 - stores metadata rather than prompts;
 - has no raw-content capture path;
@@ -30,7 +30,7 @@ The current project:
 - validates session IDs and workspaces;
 - writes private atomic exports;
 - commits trace data before deleting source files;
-- rejects conflicting duplicate events;
+- quarantines duplicate trace request IDs as infrastructure anomalies;
 - quarantines malformed traces;
 - keeps schema provisioning outside runtime code;
 - structurally removes raw proxy content capture;
@@ -50,13 +50,19 @@ The current project:
 - launches targets without a shell through a strict role and command boundary;
 - passes only the selected role credential to the child process;
 - remains independent of any specific secret provider;
+- routes the trace reducer through the validated writer launcher;
+- persists traces to `snitch.trace_records` with INSERT-only authority;
+- quarantines malformed and duplicate traces with mode `0600`;
+- keeps the continuous loop alive after isolated malformed or duplicate input;
+- retains source files after transient database failure;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
-- 27 unit tests passed, including request-ID and end-to-end finalizer tests.
-- 5 disposable PostgreSQL integration and permission tests passed.
-- 3 disposable launcher privilege probes passed.
+- 38 non-database unit tests passed.
+- 7 disposable PostgreSQL ledger and permission tests passed.
+- 4 disposable launcher privilege probes passed.
+- 1 end-to-end launcher/reducer/quarantine integration test passed.
 - 9 launcher unit tests passed.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.

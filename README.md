@@ -41,12 +41,11 @@ Prompt content is not stored by default.
 
 ### Durable event reduction
 
-Converts completed local trace files into immutable, deduplicated PostgreSQL
-events. This helps distinguish:
+Converts completed local trace files into immutable PostgreSQL events. This
+helps distinguish:
 
 - successfully committed events;
-- duplicate delivery;
-- conflicting replay;
+- duplicate delivery quarantined as an infrastructure anomaly;
 - malformed trace input;
 - database failure requiring retry.
 
@@ -202,13 +201,13 @@ Snitch may not:
 ## Safety defaults
 
 - No database credentials are embedded in source.
-- `SNITCH_DATABASE_URL` is required.
+- Database-aware processes require an explicit role-specific database variable.
 - Runtime processes do not create database tables.
 - LLM request content is not stored by default.
 - Command text is represented by a SHA-256 digest rather than stored raw.
 - Provider matching uses exact domains and subdomains.
 - Trace files are deleted only after a successful database transaction.
-- Duplicate `seq_id` replay is immutable; conflicting content is rejected.
+- Duplicate trace request IDs are quarantined and never treated as success.
 - Malformed traces are quarantined with private permissions.
 - Export files are written atomically with mode `0600`.
 - Log directories use mode `0700`.
@@ -225,8 +224,8 @@ Current state:
 - normalized session finalizer: implemented;
 - claims/evidence receipt isolation: implemented;
 - immutable JSON, SHA-256, and Markdown artifacts: implemented;
-- non-database unit tests: 36 passing;
-- disposable PostgreSQL integration tests: 8 passing;
+- non-database unit tests: 38 passing;
+- disposable PostgreSQL integration tests: 11 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
 - disposable PostgreSQL 18.4 integration: passing;
@@ -252,9 +251,9 @@ deployment.
 
 ## Database
 
-The legacy trace prototypes still use `schema_monoid.sql` and
-`SNITCH_DATABASE_URL`. The normalized v1 session ledger uses a dedicated
-`snitch` schema and three non-login capability roles:
+The file watcher and proxy prototypes still use `schema_monoid.sql` and
+`SNITCH_DATABASE_URL`. The normalized v1 session and trace ledgers use a
+dedicated `snitch` schema and three non-login capability roles:
 
 - `snitch_migrator`: owns schema and DDL;
 - `snitch_writer`: can only insert canonical session records;
@@ -326,12 +325,19 @@ privileges, and can transfer execution to a harmless writer target.
 
 Only files ending in `.ready.json` are consumed. Writers should create a
 mode-`0600` temporary file and atomically rename it after the JSON is complete.
+The reducer is launched through the validated writer boundary and inserts into
+`snitch.trace_records` without reading historical rows.
 
 ```bash
-SNITCH_DATABASE_URL=... ./run_session.sh --once
+SNITCH_WRITER_DATABASE_URL=... \
+SNITCH_READER_DATABASE_URL=... \
+./run_session.sh --once
 ```
 
-The continuous reducer can be started by omitting `--once`.
+The continuous reducer can be started by omitting `--once`. Malformed and
+duplicate inputs are quarantined with mode `0600`; either condition is isolated
+to that file and does not terminate the loop. Transient database failures retain
+the source file for retry.
 
 ## File watcher
 
@@ -457,13 +463,12 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 - feature branches are not reviewed or merged into `main`;
 - the approved external secret-loader invocation is not yet verified;
 - the finalizer command is not yet wired to the insert-only session store;
-- the continuous reducer still uses its legacy database contract;
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
 - no reviewed dependency lock;
 - no formal authorization model for proxy interception;
 - no service sandbox, health contract, or deployment manifest;
-- no PostgreSQL persistence for normalized session records.
+- no persistent staging validation or deployment rollback proof.
 
 Until these are resolved, Snitch should remain an operator-controlled
 development and audit prototype.

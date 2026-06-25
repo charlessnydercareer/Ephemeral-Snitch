@@ -52,6 +52,16 @@ class LauncherPostgresTests(unittest.TestCase):
                 "REVOKE INSERT ON snitch.session_records FROM snitch_reader"
             )
 
+    def test_excess_writer_select_on_trace_ledger_fails_live_probe(self) -> None:
+        self.execute_admin("GRANT SELECT ON snitch.trace_records TO snitch_writer")
+        try:
+            with self.assertRaises(LauncherValidationError):
+                probe_database_privileges(self.environment())
+        finally:
+            self.execute_admin(
+                "REVOKE SELECT ON snitch.trace_records FROM snitch_writer"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
