@@ -224,8 +224,8 @@ Current state:
 - normalized session finalizer: implemented;
 - claims/evidence receipt isolation: implemented;
 - immutable JSON, SHA-256, and Markdown artifacts: implemented;
-- non-database unit tests: 38 passing;
-- disposable PostgreSQL integration tests: 11 passing;
+- non-database unit tests: 40 passing;
+- disposable PostgreSQL integration tests: 12 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
 - disposable PostgreSQL 18.4 integration: passing;
@@ -418,6 +418,21 @@ Existing artifacts are never overwritten.
 Accepted IDs are normalized to lowercase. A durable exclusive reservation
 prevents the same request ID from being finalized again under another session.
 
+PostgreSQL persistence is explicit and occurs only after all local artifacts
+have been written:
+
+```bash
+./snitch-run writer .venv/bin/python snitch_session.py \
+  --input claims.json \
+  --evidence evidence.json \
+  --repo /path/to/repository \
+  --persist-postgres
+```
+
+Without `--persist-postgres`, finalization remains fully offline. If an opted-in
+database write fails, the command exits with a generic error and preserves the
+canonical JSON, digest, audit summary, and request reservation.
+
 ## Verification
 
 ```bash
@@ -462,7 +477,6 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 
 - feature branches are not reviewed or merged into `main`;
 - the approved external secret-loader invocation is not yet verified;
-- the finalizer command is not yet wired to the insert-only session store;
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
 - no reviewed dependency lock;

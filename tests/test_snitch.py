@@ -494,6 +494,58 @@ class SessionRecordTests(unittest.TestCase):
         with self.assertRaisesRegex(SessionRecordError, "content_capture"):
             validate_record(record)
 
+    def test_persistence_failure_preserves_local_artifacts(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            claims_path = root / "claims.json"
+            claims_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "persist-failure",
+                        "request_id": "req_3333333333333333",
+                        "agent": "test-agent",
+                        "model_or_tool": "test-tool",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment.pop("SNITCH_WRITER_DATABASE_URL", None)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(project_root / "snitch_session.py"),
+                    "--input",
+                    str(claims_path),
+                    "--repo",
+                    str(project_root),
+                    "--records-dir",
+                    str(root / "sessions"),
+                    "--audit-dir",
+                    str(root / "audits"),
+                    "--reservations-dir",
+                    str(root / "reservations"),
+                    "--persist-postgres",
+                ],
+                cwd=project_root,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 1)
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(
+                completed.stderr,
+                "CRITICAL: Session ledger persistence failed; "
+                "local artifacts were preserved.\n",
+            )
+            self.assertTrue((root / "sessions" / "persist-failure.json").exists())
+            self.assertTrue((root / "sessions" / "persist-failure.sha256").exists())
+            self.assertTrue((root / "audits" / "snitch_persist-failure.md").exists())
+
     def test_artifact_write_is_private_and_refuses_overwrite(self) -> None:
         record = self._record()
         with tempfile.TemporaryDirectory() as temp_dir:

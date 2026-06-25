@@ -6,8 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
+from postgres_session_store import (
+    SessionStoreError,
+    persist_canonical_session_record,
+)
 from session_record import (
     SessionRecordError,
     build_record,
@@ -36,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         "--reservations-dir",
         default=os.getenv("SNITCH_RESERVATIONS_DIR", "artifacts/reservations"),
     )
+    parser.add_argument(
+        "--persist-postgres",
+        action="store_true",
+        help="Append the finalized record to the PostgreSQL session ledger",
+    )
     return parser.parse_args()
 
 
@@ -62,6 +72,16 @@ def main() -> int:
         )
     except (OSError, json.JSONDecodeError, SessionRecordError) as exc:
         raise SystemExit(f"Snitch session finalization failed: {exc}") from exc
+
+    if args.persist_postgres:
+        try:
+            result["postgres_event_id"] = persist_canonical_session_record(record)
+        except SessionStoreError:
+            sys.stderr.write(
+                "CRITICAL: Session ledger persistence failed; "
+                "local artifacts were preserved.\n"
+            )
+            return 1
 
     print(json.dumps(result, sort_keys=True))
     return 0

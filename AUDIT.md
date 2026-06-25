@@ -55,14 +55,19 @@ The current project:
 - quarantines malformed and duplicate traces with mode `0600`;
 - keeps the continuous loop alive after isolated malformed or duplicate input;
 - retains source files after transient database failure;
+- keeps session-ledger persistence explicitly opt-in;
+- writes local session artifacts before attempting PostgreSQL persistence;
+- preserves local artifacts and emits a generic error when persistence fails;
+- verifies migration from the pre-trace `0b59962` session-ledger shape;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
-- 38 non-database unit tests passed.
-- 7 disposable PostgreSQL ledger and permission tests passed.
+- 40 non-database unit tests passed.
+- 6 disposable PostgreSQL ledger and permission tests passed.
 - 4 disposable launcher privilege probes passed.
 - 1 end-to-end launcher/reducer/quarantine integration test passed.
+- 1 end-to-end launcher/finalizer/session-ledger integration test passed.
 - 9 launcher unit tests passed.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.

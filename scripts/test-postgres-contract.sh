@@ -65,6 +65,14 @@ docker compose \
     exec --no-TTY postgres \
     psql --username snitch_bootstrap --dbname snitch_test \
     --set ON_ERROR_STOP=1 \
+    --file /dev/stdin < "$ROOT/tests/sql/session_ledger_0b59962.sql" >/dev/null
+
+docker compose \
+    --project-name "$PROJECT_NAME" \
+    --file "$COMPOSE_FILE" \
+    exec --no-TTY postgres \
+    psql --username snitch_bootstrap --dbname snitch_test \
+    --set ON_ERROR_STOP=1 \
     --file /dev/stdin < "$ROOT/sql/session_ledger.sql" >/dev/null
 
 BOOTSTRAP_URL="$bootstrap_url" \
@@ -107,6 +115,7 @@ cd "$ROOT"
     tests.test_postgres_contract \
     tests.test_launcher_postgres \
     tests.test_reducer_postgres \
+    tests.test_finalizer_postgres \
     -v
 
 SNITCH_WRITER_DATABASE_URL="$SNITCH_TEST_WRITER_DATABASE_URL" \

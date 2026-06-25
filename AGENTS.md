@@ -104,6 +104,10 @@ The current machine-readable contract is
   database variables. Select the target role explicitly.
 - A writer child must not inherit the reader database variable, and a reader
   child must not inherit the writer database variable.
+- Session-ledger persistence must remain explicit through
+  `--persist-postgres`; offline finalization is a supported path.
+- Local immutable artifacts must be completed before an optional database
+  insert, and a database failure must not remove them.
 - PostgreSQL permission validation must use the disposable Compose contract,
   never a live database.
 - Keep raw content capture disabled.
