@@ -28,6 +28,7 @@
   },
   "required": [
     "session_id",
+    "request_id",
     "agent",
     "model_or_tool",
     "repo",
@@ -51,8 +52,11 @@
   "properties": {
     "session_id": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|req_[0-9a-f]{16,64})$"
     },
     "agent": {
       "type": "string"

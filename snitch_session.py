@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
         "--audit-dir",
         default=os.getenv("SNITCH_AUDIT_DIR", "artifacts/audits"),
     )
+    parser.add_argument(
+        "--reservations-dir",
+        default=os.getenv("SNITCH_RESERVATIONS_DIR", "artifacts/reservations"),
+    )
     return parser.parse_args()
 
 
@@ -54,6 +58,7 @@ def main() -> int:
             record,
             records_dir=args.records_dir,
             audit_dir=args.audit_dir,
+            reservations_dir=args.reservations_dir,
         )
     except (OSError, json.JSONDecodeError, SessionRecordError) as exc:
         raise SystemExit(f"Snitch session finalization failed: {exc}") from exc

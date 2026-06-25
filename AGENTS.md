@@ -58,6 +58,7 @@ Keep claims and evidence in separate fields.
 Every completed session must produce one schema-valid normalized record with:
 
 - `session_id`
+- `request_id`
 - `agent`
 - `model_or_tool`
 - `repo`
@@ -80,6 +81,8 @@ Every completed session must produce one schema-valid normalized record with:
 
 The durable record must be append-only, redacted, and use
 `content_capture: false` for the v1 deployment baseline.
+Each normalized request ID must have one exclusive private reservation under
+the configured runtime artifacts directory.
 
 The current machine-readable contract is
 `schemas/session_record.schema.json`.

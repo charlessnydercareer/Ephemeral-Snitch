@@ -20,6 +20,7 @@ from reduction_sweep import (
 )
 from session_record import (
     REQUIRED_FIELDS,
+    RequestIdCollisionError,
     SessionRecordError,
     build_record,
     make_evidence_receipt,
@@ -224,6 +225,7 @@ class SessionRecordTests(unittest.TestCase):
             build_record(
                 {
                     "session_id": "session-1",
+                    "request_id": "req_1111111111111111",
                     "agent": "agent",
                     "model_or_tool": "tool",
                     "tests_verified": ["fabricated"],
@@ -243,6 +245,7 @@ class SessionRecordTests(unittest.TestCase):
         record = build_record(
             {
                 "session_id": "session-1",
+                "request_id": "req_1111111111111111",
                 "agent": "agent",
                 "model_or_tool": "tool",
                 "commands_claimed": ["claimed command"],
@@ -265,6 +268,7 @@ class SessionRecordTests(unittest.TestCase):
             build_record(
                 {
                     "session_id": "session-1",
+                    "request_id": "req_1111111111111111",
                     "agent": "agent",
                     "model_or_tool": "tool",
                 },
@@ -289,6 +293,7 @@ class SessionRecordTests(unittest.TestCase):
             build_record(
                 {
                     "session_id": "session-1",
+                    "request_id": "req_1111111111111111",
                     "agent": "agent",
                     "model_or_tool": "tool",
                     "commands_claimed": [claim],
@@ -303,6 +308,7 @@ class SessionRecordTests(unittest.TestCase):
             build_record(
                 {
                     "session_id": "session-1",
+                    "request_id": "req_1111111111111111",
                     "agent": "agent",
                     "model_or_tool": "tool",
                     "commands_claimed": [claim],
@@ -349,6 +355,7 @@ class SessionRecordTests(unittest.TestCase):
                 json.dumps(
                     {
                         "session_id": "cli-session",
+                        "request_id": "REQ_2222222222222222",
                         "agent": "test-agent",
                         "model_or_tool": "test-tool",
                         "commands_claimed": ["claimed"],
@@ -382,6 +389,8 @@ class SessionRecordTests(unittest.TestCase):
                 str(root / "sessions"),
                 "--audit-dir",
                 str(root / "audits"),
+                "--reservations-dir",
+                str(root / "reservations"),
             ]
             first = subprocess.run(
                 command,
@@ -393,7 +402,17 @@ class SessionRecordTests(unittest.TestCase):
             record = json.loads(Path(result["record"]).read_text(encoding="utf-8"))
             self.assertEqual(record["files_changed"], ["tracked.txt"])
             self.assertEqual(record["branch"], "main")
+            self.assertEqual(record["request_id"], "req_2222222222222222")
             self.assertEqual(len(record["commands_verified"]), 1)
+            reservation = json.loads(
+                Path(result["request_reservation"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(reservation["request_id"], record["request_id"])
+            audit_text = Path(result["audit"]).read_text(encoding="utf-8")
+            self.assertIn(
+                "Request Correlation ID: `req_2222222222222222`",
+                audit_text,
+            )
 
             second = subprocess.run(
                 command,
@@ -403,7 +422,7 @@ class SessionRecordTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
             self.assertNotEqual(second.returncode, 0)
-            self.assertIn("File exists", second.stderr)
+            self.assertIn("request_id collision", second.stderr)
 
     def test_validation_rejects_content_capture(self) -> None:
         record = self._record()
@@ -423,7 +442,7 @@ class SessionRecordTests(unittest.TestCase):
                 path = Path(result[field])
                 self.assertTrue(path.exists())
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            with self.assertRaises(FileExistsError):
+            with self.assertRaises(RequestIdCollisionError):
                 write_session_artifacts(
                     record,
                     records_dir=Path(temp_dir) / "sessions",
@@ -433,6 +452,7 @@ class SessionRecordTests(unittest.TestCase):
     def _record(self) -> dict[str, object]:
         return {
             "session_id": "session-1",
+            "request_id": "req_1111111111111111",
             "agent": "agent",
             "model_or_tool": "tool",
             "repo": "repo",

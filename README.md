@@ -116,6 +116,7 @@ per AI or operator session:
 ```json
 {
   "session_id": "",
+  "request_id": "",
   "agent": "",
   "model_or_tool": "",
   "repo": "",
@@ -224,7 +225,7 @@ Current state:
 - normalized session finalizer: implemented;
 - claims/evidence receipt isolation: implemented;
 - immutable JSON, SHA-256, and Markdown artifacts: implemented;
-- unit tests: 23 passing;
+- unit tests: 27 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
 - live PostgreSQL integration: not performed;
@@ -305,6 +306,7 @@ Prepare an agent claims file:
 ```json
 {
   "session_id": "session-001",
+  "request_id": "req_a1b2c3d4e5f607182930415263748596",
   "agent": "codex",
   "model_or_tool": "codex",
   "commands_claimed": [],
@@ -327,6 +329,7 @@ python snitch_session.py \
   --evidence evidence.json \
   --repo /path/to/repository \
   --records-dir artifacts/sessions \
+  --reservations-dir artifacts/reservations \
   --audit-dir artifacts/audits
 ```
 
@@ -335,8 +338,17 @@ The finalizer writes:
 - an exclusive canonical JSON session record;
 - a SHA-256 receipt;
 - a private Markdown audit summary.
+- a private request-ID reservation under `artifacts/reservations/`.
 
 Existing artifacts are never overwritten.
+
+`request_id` accepts:
+
+- a strict RFC 4122 UUIDv4; or
+- `req_` followed by 16–64 hexadecimal characters.
+
+Accepted IDs are normalized to lowercase. A durable exclusive reservation
+prevents the same request ID from being finalized again under another session.
 
 ## Verification
 
@@ -351,13 +363,12 @@ bash -n run_session.sh
 
 ## Recommended roadmap
 
-1. Add request-ID correlation to the normalized session record.
-2. Add migration-owner, insert-only writer, and read-only audit roles.
-3. Test schema and permissions against disposable PostgreSQL.
-4. Persist normalized session records through the append-only writer role.
-5. Write one normalized session summary under
+1. Add migration-owner, insert-only writer, and read-only audit roles.
+2. Test schema and permissions against disposable PostgreSQL.
+3. Persist normalized session records through the append-only writer role.
+4. Write one normalized session summary under
    the operator-configured audit directory.
-6. Add a read-only EVECOR health and timeline view later.
+5. Add a read-only EVECOR health and timeline view later.
 
 ## EVECOR deployment gate
 
@@ -386,7 +397,6 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 - no reviewed dependency lock;
 - no formal authorization model for proxy interception;
 - no service sandbox, health contract, or deployment manifest;
-- no request-ID field in the v1 session contract;
 - no PostgreSQL persistence for normalized session records.
 
 Until these are resolved, Snitch should remain an operator-controlled

@@ -7,11 +7,17 @@ import json
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
 
 SESSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+UUID_V4_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+REQUEST_HEX_PATTERN = re.compile(r"^req_[0-9a-fA-F]{16,64}$")
 HASH_PATTERN = re.compile(r"^[a-f0-9]{40,64}$")
 RECEIPT_HASH_PATTERN = re.compile(r"^sha256:[a-f0-9]{64}$")
 SENSITIVE_KEY_PARTS = {
@@ -34,6 +40,7 @@ SENSITIVE_VALUE_PATTERNS = (
 )
 REQUIRED_FIELDS = (
     "session_id",
+    "request_id",
     "agent",
     "model_or_tool",
     "repo",
@@ -54,9 +61,32 @@ REQUIRED_FIELDS = (
     "redaction_applied",
     "content_capture",
 )
-LIST_FIELDS = REQUIRED_FIELDS[7:18]
+STRING_FIELDS = (
+    "session_id",
+    "request_id",
+    "agent",
+    "model_or_tool",
+    "repo",
+    "branch",
+    "commit_before",
+    "commit_after",
+)
+LIST_FIELDS = (
+    "files_changed",
+    "commands_claimed",
+    "commands_verified",
+    "tests_claimed",
+    "tests_verified",
+    "artifacts_written",
+    "database_writes",
+    "failures",
+    "blockers",
+    "deferred_work",
+    "risk_flags",
+)
 CLAIM_INPUT_FIELDS = {
     "session_id",
+    "request_id",
     "agent",
     "model_or_tool",
     "commands_claimed",
@@ -85,6 +115,29 @@ CLAIM_FIELDS = (
 
 class SessionRecordError(ValueError):
     """Raised when a session record violates the public v1 contract."""
+
+
+class RequestIdCollisionError(SessionRecordError):
+    """Raised when a request ID already belongs to a finalized session."""
+
+
+def validate_and_normalize_request_id(request_id: Any) -> str:
+    """Validate and canonicalize a strict UUIDv4 or req_-hex request ID."""
+    if not isinstance(request_id, str) or not request_id:
+        raise SessionRecordError("request_id must be a non-empty string")
+    normalized = request_id.strip().lower()
+
+    if REQUEST_HEX_PATTERN.fullmatch(normalized):
+        return normalized
+
+    if UUID_V4_PATTERN.fullmatch(normalized):
+        parsed = uuid.UUID(normalized)
+        if parsed.version == 4 and parsed.variant == uuid.RFC_4122:
+            return str(parsed)
+
+    raise SessionRecordError(
+        "request_id must be UUIDv4 or req_ followed by 16-64 hex characters"
+    )
 
 
 def canonical_json(value: dict[str, Any]) -> bytes:
@@ -181,8 +234,11 @@ def validate_record(record: Any) -> dict[str, Any]:
     session_id = record["session_id"]
     if not isinstance(session_id, str) or not SESSION_PATTERN.fullmatch(session_id):
         raise SessionRecordError("session_id is invalid")
+    request_id = validate_and_normalize_request_id(record["request_id"])
+    if record["request_id"] != request_id:
+        raise SessionRecordError("request_id must use canonical lowercase form")
 
-    for field in REQUIRED_FIELDS[1:7]:
+    for field in STRING_FIELDS:
         if not isinstance(record[field], str):
             raise SessionRecordError(f"{field} must be a string")
 
@@ -329,6 +385,7 @@ def build_record(
     git_evidence = collect_git_evidence(repo, commit_before=commit_before)
     candidate = {
         "session_id": claims.get("session_id", ""),
+        "request_id": validate_and_normalize_request_id(claims.get("request_id")),
         "agent": claims.get("agent", ""),
         "model_or_tool": claims.get("model_or_tool", ""),
         **git_evidence,
@@ -372,6 +429,12 @@ def render_audit(record: dict[str, Any], digest: str) -> str:
     lines = [
         f"# Snitch Session {record['session_id']}",
         "",
+        "## Session Context",
+        "",
+        f"- Session ID: `{record['session_id']}`",
+        f"- Request Correlation ID: `{record['request_id']}`",
+        "- Flight Recorder Role: `evidence-only`",
+        "",
         f"- Agent: `{record['agent']}`",
         f"- Model/Tool: `{record['model_or_tool']}`",
         f"- Repository: `{record['repo']}`",
@@ -414,21 +477,63 @@ def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
         raise
 
 
+def reserve_request_id(
+    reservations_dir: str | Path,
+    *,
+    request_id: str,
+    session_id: str,
+    record_sha256: str,
+) -> Path:
+    normalized = validate_and_normalize_request_id(request_id)
+    path = Path(reservations_dir).expanduser().resolve() / f"{normalized}.reservation"
+    try:
+        _exclusive_write(
+            path,
+            canonical_json(
+                {
+                    "request_id": normalized,
+                    "session_id": session_id,
+                    "record_sha256": record_sha256,
+                }
+            )
+            + b"\n",
+        )
+    except FileExistsError as exc:
+        raise RequestIdCollisionError(
+            f"request_id collision: {normalized} is already reserved"
+        ) from exc
+    return path
+
+
 def write_session_artifacts(
     record: dict[str, Any],
     *,
     records_dir: str | Path,
     audit_dir: str | Path,
+    reservations_dir: str | Path | None = None,
 ) -> dict[str, str]:
     record = validate_record(record)
     digest = record_digest(record)
     stem = record["session_id"]
-    json_path = Path(records_dir).expanduser().resolve() / f"{stem}.json"
+    records_root = Path(records_dir).expanduser().resolve()
+    json_path = records_root / f"{stem}.json"
     digest_path = json_path.with_suffix(".sha256")
     audit_path = Path(audit_dir).expanduser().resolve() / f"snitch_{stem}.md"
+    reservations_root = (
+        Path(reservations_dir).expanduser().resolve()
+        if reservations_dir is not None
+        else records_root.parent / "reservations"
+    )
 
     created: list[Path] = []
     try:
+        reservation_path = reserve_request_id(
+            reservations_root,
+            request_id=record["request_id"],
+            session_id=record["session_id"],
+            record_sha256=digest,
+        )
+        created.append(reservation_path)
         _exclusive_write(json_path, canonical_json(record) + b"\n")
         created.append(json_path)
         _exclusive_write(digest_path, f"{digest}  {json_path.name}\n".encode())
@@ -444,5 +549,6 @@ def write_session_artifacts(
         "record": str(json_path),
         "digest": str(digest_path),
         "audit": str(audit_path),
+        "request_reservation": str(reservation_path),
         "sha256": digest,
     }

@@ -37,11 +37,13 @@ The current project:
 - separates claims from verified evidence receipts;
 - derives Git facts independently;
 - writes immutable JSON, SHA-256, and Markdown session artifacts;
+- binds strict request IDs into records, receipts, and summaries;
+- reserves request IDs durably to reject collisions;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
-- 23 unit tests passed, including an end-to-end finalizer CLI test.
+- 27 unit tests passed, including request-ID and end-to-end finalizer tests.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.
 - Shell syntax validation passed.
@@ -56,7 +58,6 @@ was used during remediation.
 - dedicated migration, writer, and reader database roles;
 - PostgreSQL integration and permission tests;
 - PostgreSQL persistence for normalized session records;
-- request-ID correlation;
 - retention, deletion, consent, and encrypted-export policies;
 - reviewed dependency lock;
 - sandboxed deployment and health contract.
