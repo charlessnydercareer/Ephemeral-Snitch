@@ -98,6 +98,12 @@ The current machine-readable contract is
 - Runtime code must not provision schema.
 - Keep database credentials and URLs in the runtime secret environment; never
   write them to source, SQL, tests, audits, or Git.
+- Secret acquisition belongs to the approved parent launcher. Snitch must
+  remain independent of Vault, KeePassXC, or any other secret provider.
+- Execute database-aware targets through `snitch-run` after loading both
+  database variables. Select the target role explicitly.
+- A writer child must not inherit the reader database variable, and a reader
+  child must not inherit the writer database variable.
 - PostgreSQL permission validation must use the disposable Compose contract,
   never a live database.
 - Keep raw content capture disabled.

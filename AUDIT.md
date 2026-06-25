@@ -45,12 +45,19 @@ The current project:
 - enforces request, session, digest, redaction, and content-capture constraints
   at the database boundary;
 - verifies writer and reader privileges against disposable PostgreSQL 18.4;
+- validates effective role membership, complete table privilege denial,
+  schema ownership, and table ownership before target execution;
+- launches targets without a shell through a strict role and command boundary;
+- passes only the selected role credential to the child process;
+- remains independent of any specific secret provider;
 - includes unit tests and public operating documentation.
 
 ## Verification
 
 - 27 unit tests passed, including request-ID and end-to-end finalizer tests.
 - 5 disposable PostgreSQL integration and permission tests passed.
+- 3 disposable launcher privilege probes passed.
+- 9 launcher unit tests passed.
 - Python compilation passed.
 - Ruff lint and formatting checks passed.
 - Shell syntax validation passed.
@@ -65,6 +72,7 @@ tmpfs-backed disposable container with transient credentials.
 
 - feature branch review and merge;
 - deployment wiring from the finalizer command to the insert-only store;
+- verification of the approved external secret-loader invocation;
 - retention, deletion, consent, and encrypted-export policies;
 - reviewed dependency lock;
 - sandboxed deployment and health contract.

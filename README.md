@@ -225,8 +225,8 @@ Current state:
 - normalized session finalizer: implemented;
 - claims/evidence receipt isolation: implemented;
 - immutable JSON, SHA-256, and Markdown artifacts: implemented;
-- unit tests: 27 passing;
-- disposable PostgreSQL contract tests: 5 passing;
+- non-database unit tests: 36 passing;
+- disposable PostgreSQL integration tests: 8 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
 - disposable PostgreSQL 18.4 integration: passing;
@@ -282,6 +282,33 @@ The finalizer store reads only `SNITCH_WRITER_DATABASE_URL` and performs one
 validated `INSERT`; it does not provision, read, update, delete, truncate, or
 drop ledger state.
 
+### Provider-independent launcher
+
+The approved secret loader must place distinct writer and reader database
+values in the parent environment. Snitch does not retrieve secrets itself and
+does not depend on a specific vault provider.
+
+Run a writer target through the validated launcher:
+
+```bash
+./snitch-run writer .venv/bin/python snitch_session.py --help
+```
+
+Run a future read-only target with `reader` instead. Before execution, the
+launcher verifies:
+
+- membership in the appropriate non-login capability role;
+- exactly one allowed table privilege (`INSERT` or `SELECT`);
+- denial of all other table privileges;
+- denial of schema `CREATE`;
+- absence of schema or ledger ownership;
+- distinct writer and reader connection values.
+
+The target must follow an explicit `--` boundary internally and is executed
+without a shell. A writer child receives only the writer database variable; a
+reader child receives only the reader variable. Arbitrary parent variables,
+`HOME`, and `PYTHONPATH` are not propagated.
+
 Run the isolated permission suite against a temporary PostgreSQL 18.4
 container:
 
@@ -291,7 +318,9 @@ container:
 
 The script generates transient credentials, binds PostgreSQL to an
 automatically assigned loopback port, stores its data in container tmpfs, and
-removes only its uniquely named disposable Compose project on exit.
+removes only its uniquely named disposable Compose project on exit. It also
+proves that the launcher accepts correct roles, rejects injected excess
+privileges, and can transfer execution to a harmless writer target.
 
 ## Trace reducer
 
@@ -392,6 +421,7 @@ python -m py_compile *.py tests/*.py
 ruff check .
 ruff format --check .
 bash -n run_session.sh
+python -m unittest tests.test_launcher -v
 ./scripts/test-postgres-contract.sh
 ```
 
@@ -424,8 +454,10 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 
 ## Production blockers
 
-- no dedicated database role migration or permission tests;
-- no live PostgreSQL integration test;
+- feature branches are not reviewed or merged into `main`;
+- the approved external secret-loader invocation is not yet verified;
+- the finalizer command is not yet wired to the insert-only session store;
+- the continuous reducer still uses its legacy database contract;
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
 - no reviewed dependency lock;

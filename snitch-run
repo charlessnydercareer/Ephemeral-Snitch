@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="$ROOT/.venv/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+    echo "CRITICAL: Snitch runtime is unavailable." >&2
+    exit 1
+fi
+
+if [[ -z "${SNITCH_WRITER_DATABASE_URL:-}" ]] ||
+   [[ -z "${SNITCH_READER_DATABASE_URL:-}" ]]; then
+    echo "CRITICAL: Snitch database configuration is unavailable." >&2
+    exit 1
+fi
+
+if [[ "$#" -lt 2 ]] || [[ "$1" != "writer" && "$1" != "reader" ]]; then
+    echo "CRITICAL: No Snitch target was provided." >&2
+    exit 1
+fi
+
+role="$1"
+shift
+exec "$PYTHON" "$ROOT/snitch_launcher.py" --role "$role" -- "$@"

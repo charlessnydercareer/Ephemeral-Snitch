@@ -97,8 +97,17 @@ PY
 
 export SNITCH_TEST_WRITER_DATABASE_URL
 export SNITCH_TEST_READER_DATABASE_URL
+export SNITCH_TEST_ADMIN_DATABASE_URL
 SNITCH_TEST_WRITER_DATABASE_URL="host=127.0.0.1 port=${host_port} dbname=snitch_test user=snitch_test_writer password=${writer_password}"
 SNITCH_TEST_READER_DATABASE_URL="host=127.0.0.1 port=${host_port} dbname=snitch_test user=snitch_test_reader password=${reader_password}"
+SNITCH_TEST_ADMIN_DATABASE_URL="$bootstrap_url"
 
 cd "$ROOT"
-"$PYTHON" -m unittest tests.test_postgres_contract -v
+"$PYTHON" -m unittest \
+    tests.test_postgres_contract \
+    tests.test_launcher_postgres \
+    -v
+
+SNITCH_WRITER_DATABASE_URL="$SNITCH_TEST_WRITER_DATABASE_URL" \
+SNITCH_READER_DATABASE_URL="$SNITCH_TEST_READER_DATABASE_URL" \
+    "$ROOT/snitch-run" writer /usr/bin/true
