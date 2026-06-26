@@ -75,3 +75,27 @@ def default_reservations_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return DEFAULT_RESERVATIONS_DIR
+
+
+def evecor_consumer_audit_dir() -> Path:
+    """Fixed operator audit directory for EVECOR Snitch consumers."""
+    return DEFAULT_AUDIT_DIR
+
+
+def validate_evecor_consumer_audit_dir(path: str | Path) -> Path:
+    """Reject audit destinations outside the EVECOR operator path."""
+    resolved = Path(path).expanduser().resolve()
+    expected = DEFAULT_AUDIT_DIR.resolve()
+    if resolved != expected:
+        raise ValueError(
+            f"EVECOR Snitch audits must be written only to {expected}"
+        )
+    return expected
+
+
+def require_snitch_secrets_available() -> None:
+    """Fail closed when writer or reader database URLs cannot be resolved."""
+    for env_var in DATABASE_URL_VARS:
+        value = load_secret(env_var)
+        if not value.strip():
+            raise RuntimeError(f"{env_var} is empty")

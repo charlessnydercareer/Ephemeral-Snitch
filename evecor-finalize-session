@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# EVECOR consumers must not redirect audits elsewhere.
+unset SNITCH_AUDIT_DIR
+
+exec "${SCRIPT_DIR}/snitch-run-secret" writer \
+    "${SCRIPT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/snitch_evecor_consumer.py" \
+    "$@"

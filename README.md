@@ -450,6 +450,7 @@ python -m py_compile *.py tests/*.py
 ruff check .
 ruff format --check .
 bash -n run_session.sh
+bash -n evecor-finalize-session
 python -m unittest tests.test_launcher -v
 ./scripts/test-postgres-contract.sh
 ```
@@ -462,6 +463,30 @@ python -m unittest tests.test_launcher -v
 4. ~~Route finalizer audit output to `/mnt/jarvis-data/projects/Audits/snitch/`.~~
 5. Define retention, deletion, consent, and encrypted-export policies.
 6. Add a read-only EVECOR health and timeline view later.
+7. ~~Wire the EVECOR consumer entry point (`evecor-finalize-session`).~~
+
+## EVECOR consumer finalizer
+
+EVECOR callers should use the secret-aware consumer entry point instead of
+`snitch-run` or raw `snitch_session.py`:
+
+```bash
+./evecor-finalize-session \
+  --input claims.json \
+  --evidence evidence.json \
+  --repo /path/to/repository \
+  --persist-postgres
+```
+
+Consumer guarantees:
+
+- launches through `snitch-run-secret`, not `snitch-run`;
+- requires `SNITCH_WRITER_DATABASE_URL` and `SNITCH_READER_DATABASE_URL`;
+- fails closed when either secret is missing;
+- writes Markdown audits only to `/mnt/jarvis-data/projects/Audits/snitch/`;
+- preserves mode `0600` on audit artifacts.
+
+`SNITCH_AUDIT_DIR` is ignored for EVECOR consumers.
 
 ## EVECOR deployment gate
 
@@ -484,7 +509,7 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 ## Production blockers
 
 - ~~feature branches are not reviewed or merged into `main`;~~
-- jarvis-secret entries for writer and reader URLs must exist in deployment;
+- ~~jarvis-secret entries for writer and reader URLs must exist in deployment;~~
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
 - ~~no reviewed dependency lock;~~
