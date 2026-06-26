@@ -241,13 +241,18 @@ The repository audit and remediation record is available in
 Use a project virtual environment. Do not install dependencies globally.
 
 ```bash
+uv sync
+```
+
+Or with the legacy manifest:
+
+```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-The dependency versions are a reviewed starting point, not a complete lock.
-Optional mitmproxy and inotify dependencies must be tested and pinned before
-deployment.
+Locked dependencies live in `pyproject.toml` and `uv.lock`. Optional mitmproxy
+and inotify integrations must be tested and pinned before deployment.
 
 ## Database
 
@@ -283,18 +288,19 @@ drop ledger state.
 
 ### Provider-independent launcher
 
-The approved secret loader must place distinct writer and reader database
-values in the parent environment. Snitch does not retrieve secrets itself and
-does not depend on a specific vault provider.
+Database URLs may be supplied by the parent environment or loaded through
+`snitch-run-secret`, which resolves `SNITCH_WRITER_DATABASE_URL` and
+`SNITCH_READER_DATABASE_URL` from `jarvis-secret` when they are not already
+set. Snitch does not depend on a specific vault provider.
 
-Run a writer target through the validated launcher:
+Run a writer target through the secret-aware launcher:
 
 ```bash
-./snitch-run writer .venv/bin/python snitch_session.py --help
+./snitch-run-secret writer .venv/bin/python snitch_session.py --help
 ```
 
-Run a future read-only target with `reader` instead. Before execution, the
-launcher verifies:
+When URLs are already exported, `./snitch-run` remains available. Before
+execution, the launcher verifies:
 
 - membership in the appropriate non-login capability role;
 - exactly one allowed table privilege (`INSERT` or `SELECT`);
@@ -329,10 +335,11 @@ The reducer is launched through the validated writer boundary and inserts into
 `snitch.trace_records` without reading historical rows.
 
 ```bash
-SNITCH_WRITER_DATABASE_URL=... \
-SNITCH_READER_DATABASE_URL=... \
 ./run_session.sh --once
 ```
+
+`run_session.sh` invokes `snitch-run-secret`, so writer and reader URLs are
+loaded from the environment or `jarvis-secret` automatically.
 
 The continuous reducer can be started by omitting `--once`. Malformed and
 duplicate inputs are quarantined with mode `0600`; either condition is isolated
@@ -395,11 +402,12 @@ derived directly by the finalizer.
 python snitch_session.py \
   --input claims.json \
   --evidence evidence.json \
-  --repo /path/to/repository \
-  --records-dir artifacts/sessions \
-  --reservations-dir artifacts/reservations \
-  --audit-dir artifacts/audits
+  --repo /path/to/repository
 ```
+
+By default, Markdown audit summaries are written to
+`/mnt/jarvis-data/projects/Audits/snitch/`. Override with `SNITCH_AUDIT_DIR`
+or `--audit-dir`.
 
 The finalizer writes:
 
@@ -422,7 +430,7 @@ PostgreSQL persistence is explicit and occurs only after all local artifacts
 have been written:
 
 ```bash
-./snitch-run writer .venv/bin/python snitch_session.py \
+./snitch-run-secret writer .venv/bin/python snitch_session.py \
   --input claims.json \
   --evidence evidence.json \
   --repo /path/to/repository \
@@ -448,12 +456,12 @@ python -m unittest tests.test_launcher -v
 
 ## Recommended roadmap
 
-1. Review and merge the session finalizer and PostgreSQL contract branches.
-2. Wire the finalizer command to the insert-only session store at deployment.
-3. Write one normalized session summary under
-   the operator-configured audit directory.
-4. Define retention, deletion, consent, and encrypted-export policies.
-5. Add a read-only EVECOR health and timeline view later.
+1. ~~Review and merge the session finalizer and PostgreSQL contract branches.~~
+2. ~~Wire the secret-loader wrapper (`snitch-run-secret`).~~
+3. ~~Add dependency lock (`pyproject.toml` + `uv.lock`).~~
+4. ~~Route finalizer audit output to `/mnt/jarvis-data/projects/Audits/snitch/`.~~
+5. Define retention, deletion, consent, and encrypted-export policies.
+6. Add a read-only EVECOR health and timeline view later.
 
 ## EVECOR deployment gate
 
@@ -475,11 +483,11 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 
 ## Production blockers
 
-- feature branches are not reviewed or merged into `main`;
-- the approved external secret-loader invocation is not yet verified;
+- ~~feature branches are not reviewed or merged into `main`;~~
+- jarvis-secret entries for writer and reader URLs must exist in deployment;
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
-- no reviewed dependency lock;
+- ~~no reviewed dependency lock;~~
 - no formal authorization model for proxy interception;
 - no service sandbox, health contract, or deployment manifest;
 - no persistent staging validation or deployment rollback proof.

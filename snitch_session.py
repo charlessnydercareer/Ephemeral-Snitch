@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -17,6 +16,11 @@ from session_record import (
     SessionRecordError,
     build_record,
     write_session_artifacts,
+)
+from snitch_config import (
+    default_audit_dir,
+    default_records_dir,
+    default_reservations_dir,
 )
 
 
@@ -31,15 +35,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--commit-before")
     parser.add_argument(
         "--records-dir",
-        default=os.getenv("SNITCH_RECORDS_DIR", "artifacts/sessions"),
+        default=str(default_records_dir()),
     )
     parser.add_argument(
         "--audit-dir",
-        default=os.getenv("SNITCH_AUDIT_DIR", "artifacts/audits"),
+        default=str(default_audit_dir()),
     )
     parser.add_argument(
         "--reservations-dir",
-        default=os.getenv("SNITCH_RESERVATIONS_DIR", "artifacts/reservations"),
+        default=str(default_reservations_dir()),
     )
     parser.add_argument(
         "--persist-postgres",

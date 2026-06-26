@@ -1,0 +1,19 @@
+[project]
+name = "ephemeral-snitch"
+version = "0.1.0"
+description = "Operator-controlled flight recorder for AI and software sessions"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]==3.3.4",
+    "psycopg-pool==3.3.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
