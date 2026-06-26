@@ -42,7 +42,15 @@ class EvecorConsumerConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "jarvis-secret is unavailable"):
                 require_snitch_secrets_available()
 
-    def test_require_snitch_secrets_available_loads_both_urls(self) -> None:
+    def test_require_snitch_secrets_available_accepts_writer_only_child_env(
+        self,
+    ) -> None:
+        with patch.dict(os.environ, {WRITER_URL_VAR: "writer-url"}, clear=True):
+            require_snitch_secrets_available()
+
+    def test_require_snitch_secrets_available_loads_both_urls_when_unset(
+        self,
+    ) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with patch(
                 "snitch_config.load_secret",

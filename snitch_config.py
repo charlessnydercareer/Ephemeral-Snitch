@@ -94,8 +94,17 @@ def validate_evecor_consumer_audit_dir(path: str | Path) -> Path:
 
 
 def require_snitch_secrets_available() -> None:
-    """Fail closed when writer or reader database URLs cannot be resolved."""
+    """Fail closed when database URLs required for the current process are missing."""
+    writer = os.environ.get(WRITER_URL_VAR, "").strip()
+    reader = os.environ.get(READER_URL_VAR, "").strip()
+    if writer and reader:
+        return
+    if writer and not reader:
+        # snitch-run-secret validates both URLs before exec; writer children
+        # receive only SNITCH_WRITER_DATABASE_URL by design.
+        return
     for env_var in DATABASE_URL_VARS:
-        value = load_secret(env_var)
-        if not value.strip():
-            raise RuntimeError(f"{env_var} is empty")
+        if not os.environ.get(env_var, "").strip():
+            value = load_secret(env_var)
+            if not value.strip():
+                raise RuntimeError(f"{env_var} is empty")
