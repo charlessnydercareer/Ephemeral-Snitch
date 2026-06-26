@@ -58,6 +58,7 @@ Keep claims and evidence in separate fields.
 Every completed session must produce one schema-valid normalized record with:
 
 - `session_id`
+- `request_id`
 - `agent`
 - `model_or_tool`
 - `repo`
@@ -80,6 +81,8 @@ Every completed session must produce one schema-valid normalized record with:
 
 The durable record must be append-only, redacted, and use
 `content_capture: false` for the v1 deployment baseline.
+Each normalized request ID must have one exclusive private reservation under
+the configured runtime artifacts directory.
 
 The current machine-readable contract is
 `schemas/session_record.schema.json`.
@@ -87,8 +90,26 @@ The current machine-readable contract is
 ## Safety and scope
 
 - Do not connect to a live database or proxy traffic without operator approval.
-- Use a dedicated least-privilege database role.
+- Use `snitch_migrator` only for schema migration.
+- Use `snitch_writer` only for canonical record insertion.
+- Use `snitch_reader` only for audit reads.
+- Runtime writer code must not receive SELECT, UPDATE, DELETE, TRUNCATE, ALTER,
+  DROP, or CREATE privileges.
 - Runtime code must not provision schema.
+- Keep database credentials and URLs in the runtime secret environment; never
+  write them to source, SQL, tests, audits, or Git.
+- Secret acquisition belongs to the approved parent launcher. Snitch must
+  remain independent of Vault, KeePassXC, or any other secret provider.
+- Execute database-aware targets through `snitch-run` after loading both
+  database variables. Select the target role explicitly.
+- A writer child must not inherit the reader database variable, and a reader
+  child must not inherit the writer database variable.
+- Session-ledger persistence must remain explicit through
+  `--persist-postgres`; offline finalization is a supported path.
+- Local immutable artifacts must be completed before an optional database
+  insert, and a database failure must not remove them.
+- PostgreSQL permission validation must use the disposable Compose contract,
+  never a live database.
 - Keep raw content capture disabled.
 - Preserve malformed evidence in private quarantine rather than deleting it.
 - Keep exports private and atomic.

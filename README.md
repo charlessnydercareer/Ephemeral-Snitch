@@ -41,12 +41,11 @@ Prompt content is not stored by default.
 
 ### Durable event reduction
 
-Converts completed local trace files into immutable, deduplicated PostgreSQL
-events. This helps distinguish:
+Converts completed local trace files into immutable PostgreSQL events. This
+helps distinguish:
 
 - successfully committed events;
-- duplicate delivery;
-- conflicting replay;
+- duplicate delivery quarantined as an infrastructure anomaly;
 - malformed trace input;
 - database failure requiring retry.
 
@@ -116,6 +115,7 @@ per AI or operator session:
 ```json
 {
   "session_id": "",
+  "request_id": "",
   "agent": "",
   "model_or_tool": "",
   "repo": "",
@@ -158,6 +158,22 @@ Examples:
 Claims may be preserved, but they must never be promoted to verified evidence
 without an independent observation.
 
+Verified evidence uses a receipt:
+
+```json
+{
+  "source": "shell",
+  "observation": {
+    "command": "python -m unittest discover -s tests -v",
+    "exit_code": 0
+  },
+  "evidence_sha256": "sha256:<digest>"
+}
+```
+
+The finalizer recomputes each receipt hash and rejects unhashed, tampered,
+object-reused, or claim-identical evidence.
+
 ## Hard boundaries
 
 Snitch may:
@@ -185,13 +201,13 @@ Snitch may not:
 ## Safety defaults
 
 - No database credentials are embedded in source.
-- `SNITCH_DATABASE_URL` is required.
+- Database-aware processes require an explicit role-specific database variable.
 - Runtime processes do not create database tables.
 - LLM request content is not stored by default.
 - Command text is represented by a SHA-256 digest rather than stored raw.
 - Provider matching uses exact domains and subdomains.
 - Trace files are deleted only after a successful database transaction.
-- Duplicate `seq_id` replay is immutable; conflicting content is rejected.
+- Duplicate trace request IDs are quarantined and never treated as success.
 - Malformed traces are quarantined with private permissions.
 - Export files are written atomically with mode `0600`.
 - Log directories use mode `0700`.
@@ -199,18 +215,23 @@ Snitch may not:
 ## Current status
 
 The original Labs prototype contained critical correctness and privacy defects.
-The standalone Projects copy has been repaired and now passes its unit and
-static checks.
+The public project has been repaired and now passes its unit and static checks.
 
 Current state:
 
 - core safety repair: complete;
-- unit tests: 12 passing;
+- metadata-only proxy boundary: structural;
+- normalized session finalizer: implemented;
+- claims/evidence receipt isolation: implemented;
+- immutable JSON, SHA-256, and Markdown artifacts: implemented;
+- non-database unit tests: 40 passing;
+- disposable PostgreSQL integration tests: 12 passing;
 - lint, formatting, compilation, and shell syntax: passing;
 - secret-pattern scan: clean;
-- live PostgreSQL integration: not performed;
+- disposable PostgreSQL 18.4 integration: passing;
+- canonical session ledger roles: migration, insert-only writer, read-only reader;
 - production readiness: no;
-- governed Git checkpoint: absent.
+- governed Git repository: public on GitHub.
 
 The repository audit and remediation record is available in
 [`AUDIT.md`](AUDIT.md).
@@ -230,26 +251,93 @@ deployment.
 
 ## Database
 
-Load `SNITCH_DATABASE_URL` from the approved secret store, then apply the schema
-with migration credentials:
+The file watcher and proxy prototypes still use `schema_monoid.sql` and
+`SNITCH_DATABASE_URL`. The normalized v1 session and trace ledgers use a
+dedicated `snitch` schema and three non-login capability roles:
+
+- `snitch_migrator`: owns schema and DDL;
+- `snitch_writer`: can only insert canonical session records;
+- `snitch_reader`: can only select canonical session records.
+
+Apply these role scripts only to a database dedicated to Snitch. The hardening
+revokes default `PUBLIC` schema creation and is not intended for a shared
+application database.
+
+An infrastructure administrator creates login principals, injects their
+credentials from the approved secret store, and grants the appropriate
+capability role. Passwords and database URLs do not belong in SQL or source.
+
+Apply the v1 ledger with a migration principal that is allowed to assume
+`snitch_migrator`:
 
 ```bash
-psql "$SNITCH_DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_monoid.sql
+psql "$SNITCH_ADMIN_DATABASE_URL" -f sql/roles.sql
+psql "$SNITCH_ADMIN_DATABASE_URL" \
+  -c "GRANT snitch_migrator TO your_migration_principal"
+psql "$SNITCH_MIGRATOR_DATABASE_URL" -f sql/session_ledger.sql
 ```
 
-Use a dedicated least-privilege Snitch runtime role. Do not run Snitch with a
-database owner or administrator account.
+The finalizer store reads only `SNITCH_WRITER_DATABASE_URL` and performs one
+validated `INSERT`; it does not provision, read, update, delete, truncate, or
+drop ledger state.
+
+### Provider-independent launcher
+
+The approved secret loader must place distinct writer and reader database
+values in the parent environment. Snitch does not retrieve secrets itself and
+does not depend on a specific vault provider.
+
+Run a writer target through the validated launcher:
+
+```bash
+./snitch-run writer .venv/bin/python snitch_session.py --help
+```
+
+Run a future read-only target with `reader` instead. Before execution, the
+launcher verifies:
+
+- membership in the appropriate non-login capability role;
+- exactly one allowed table privilege (`INSERT` or `SELECT`);
+- denial of all other table privileges;
+- denial of schema `CREATE`;
+- absence of schema or ledger ownership;
+- distinct writer and reader connection values.
+
+The target must follow an explicit `--` boundary internally and is executed
+without a shell. A writer child receives only the writer database variable; a
+reader child receives only the reader variable. Arbitrary parent variables,
+`HOME`, and `PYTHONPATH` are not propagated.
+
+Run the isolated permission suite against a temporary PostgreSQL 18.4
+container:
+
+```bash
+./scripts/test-postgres-contract.sh
+```
+
+The script generates transient credentials, binds PostgreSQL to an
+automatically assigned loopback port, stores its data in container tmpfs, and
+removes only its uniquely named disposable Compose project on exit. It also
+proves that the launcher accepts correct roles, rejects injected excess
+privileges, and can transfer execution to a harmless writer target.
 
 ## Trace reducer
 
 Only files ending in `.ready.json` are consumed. Writers should create a
 mode-`0600` temporary file and atomically rename it after the JSON is complete.
+The reducer is launched through the validated writer boundary and inserts into
+`snitch.trace_records` without reading historical rows.
 
 ```bash
-SNITCH_DATABASE_URL=... ./run_session.sh --once
+SNITCH_WRITER_DATABASE_URL=... \
+SNITCH_READER_DATABASE_URL=... \
+./run_session.sh --once
 ```
 
-The continuous reducer can be started by omitting `--once`.
+The continuous reducer can be started by omitting `--once`. Malformed and
+duplicate inputs are quarantined with mode `0600`; either condition is isolated
+to that file and does not terminate the loop. Transient database failures retain
+the source file for retry.
 
 ## File watcher
 
@@ -276,10 +364,74 @@ mitmdump -s snitch_processor.py \
 
 The default stores metadata and a content hash, not prompts.
 
-Setting `capture_content=true` stores request content after sensitive-key
-redaction and system-message removal. That mode still handles sensitive data
-and requires an explicit consent, retention, encryption, and deletion policy.
-Removing content capture entirely should be considered before production use.
+Raw request-content capture is not implemented. The proxy has no content
+capture option.
+
+## Session finalizer
+
+Prepare an agent claims file:
+
+```json
+{
+  "session_id": "session-001",
+  "request_id": "req_a1b2c3d4e5f607182930415263748596",
+  "agent": "codex",
+  "model_or_tool": "codex",
+  "commands_claimed": [],
+  "tests_claimed": [],
+  "artifacts_written": [],
+  "failures": [],
+  "blockers": [],
+  "deferred_work": [],
+  "risk_flags": []
+}
+```
+
+Verified observer evidence is supplied separately and must contain valid
+evidence receipts. Git repository, branch, commits, and changed paths are
+derived directly by the finalizer.
+
+```bash
+python snitch_session.py \
+  --input claims.json \
+  --evidence evidence.json \
+  --repo /path/to/repository \
+  --records-dir artifacts/sessions \
+  --reservations-dir artifacts/reservations \
+  --audit-dir artifacts/audits
+```
+
+The finalizer writes:
+
+- an exclusive canonical JSON session record;
+- a SHA-256 receipt;
+- a private Markdown audit summary;
+- a private request-ID reservation under `artifacts/reservations/`.
+
+Existing artifacts are never overwritten.
+
+`request_id` accepts:
+
+- a strict RFC 4122 UUIDv4; or
+- `req_` followed by 16–64 hexadecimal characters.
+
+Accepted IDs are normalized to lowercase. A durable exclusive reservation
+prevents the same request ID from being finalized again under another session.
+
+PostgreSQL persistence is explicit and occurs only after all local artifacts
+have been written:
+
+```bash
+./snitch-run writer .venv/bin/python snitch_session.py \
+  --input claims.json \
+  --evidence evidence.json \
+  --repo /path/to/repository \
+  --persist-postgres
+```
+
+Without `--persist-postgres`, finalization remains fully offline. If an opted-in
+database write fails, the command exits with a generic error and preserves the
+canonical JSON, digest, audit summary, and request reservation.
 
 ## Verification
 
@@ -287,24 +439,21 @@ Removing content capture entirely should be considered before production use.
 python -m unittest discover -s tests -v
 python tests/test_snitch.py -v
 python -m py_compile *.py tests/*.py
-ruff check pg0.py reduction_sweep.py snitch_daemon.py snitch_processor.py tests/test_snitch.py
-ruff format --check pg0.py reduction_sweep.py snitch_daemon.py snitch_processor.py tests/test_snitch.py
+ruff check .
+ruff format --check .
 bash -n run_session.sh
+python -m unittest tests.test_launcher -v
+./scripts/test-postgres-contract.sh
 ```
 
 ## Recommended roadmap
 
-1. Place Snitch in a governed Git repository and commit the repaired baseline.
-2. Remove or permanently disable raw content capture for the v1 deployment.
-3. Apply redaction before every persistence boundary.
-4. Add session, agent, repository, branch, commit, and request-ID correlation.
-5. Add the normalized append-only session record schema.
-6. Add migration-owner, insert-only writer, and read-only audit roles.
-7. Test schema and permissions against disposable PostgreSQL.
-8. Preserve deterministic reduction and malformed-trace quarantine.
-9. Write one normalized session summary under
+1. Review and merge the session finalizer and PostgreSQL contract branches.
+2. Wire the finalizer command to the insert-only session store at deployment.
+3. Write one normalized session summary under
    the operator-configured audit directory.
-10. Add a read-only EVECOR health and timeline view later.
+4. Define retention, deletion, consent, and encrypted-export policies.
+5. Add a read-only EVECOR health and timeline view later.
 
 ## EVECOR deployment gate
 
@@ -326,16 +475,14 @@ Governance remains with hooks, ledgers, policies, and operator approval.
 
 ## Production blockers
 
-- no dedicated database role migration or permission tests;
-- no live PostgreSQL integration test;
+- feature branches are not reviewed or merged into `main`;
+- the approved external secret-loader invocation is not yet verified;
 - no retention, deletion, or consent policy;
 - no encrypted durable export design;
 - no reviewed dependency lock;
 - no formal authorization model for proxy interception;
 - no service sandbox, health contract, or deployment manifest;
-- no independent governed Git checkpoint.
-- no normalized v1 session-record producer;
-- no automatic audit-summary artifact writer.
+- no persistent staging validation or deployment rollback proof.
 
 Until these are resolved, Snitch should remain an operator-controlled
 development and audit prototype.

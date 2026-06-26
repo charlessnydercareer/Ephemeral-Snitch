@@ -2,17 +2,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 LOG_DIR="${SNITCH_LOG_DIR:-${SCRIPT_DIR}/logs}"
 
-if [[ -z "${SNITCH_DATABASE_URL:-}" ]]; then
-    echo "SNITCH_DATABASE_URL is required; load it from the approved secret store." >&2
+if [[ -z "${SNITCH_WRITER_DATABASE_URL:-}" ]] ||
+   [[ -z "${SNITCH_READER_DATABASE_URL:-}" ]]; then
+    echo "Snitch database configuration is unavailable." >&2
     exit 2
 fi
 
 mkdir -p "${LOG_DIR}"
 chmod 700 "${LOG_DIR}"
 
-exec "${PYTHON_BIN}" "${SCRIPT_DIR}/reduction_sweep.py" \
+exec "${SCRIPT_DIR}/snitch-run" writer \
+    "${SCRIPT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/reduction_sweep.py" \
     --source-dir "${LOG_DIR}" \
     "$@"
